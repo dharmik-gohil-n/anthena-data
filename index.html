@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Athena Analytics | AI Data Analyst Workbench</title>
+  
+  <!-- CDNs for visual and analytical libraries -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/alasql@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  
+  <!-- Custom Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  
+  <div class="app-container">
+    
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <i class="fa-solid fa-brain brand-icon"></i>
+        <span class="brand-name">Athena AI</span>
+      </div>
+      
+      <nav class="nav-links">
+        <li class="nav-item">
+          <a class="nav-link active" onclick="switchTab('welcome')">
+            <i class="fa-solid fa-house"></i>
+            <span>Home Welcome</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" onclick="switchTab('datahub')">
+            <i class="fa-solid fa-database"></i>
+            <span>Data Hub & Profile</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" onclick="switchTab('sqllab')">
+            <i class="fa-solid fa-code"></i>
+            <span>SQL Playground</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" onclick="switchTab('pivot')">
+            <i class="fa-solid fa-table-cells"></i>
+            <span>Pivot Table</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" onclick="switchTab('dashboard')">
+            <i class="fa-solid fa-chart-line"></i>
+            <span>Dashboard Studio</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" onclick="switchTab('aianalyst')">
+            <i class="fa-solid fa-robot"></i>
+            <span>AI Copilot</span>
+          </a>
+        </li>
+      </nav>
+      
+      <div class="sidebar-footer">
+        <div class="dataset-badge">
+          <div id="dataset-status-dot" class="dataset-badge-dot"></div>
+          <div class="dataset-badge-info">
+            <span id="loaded-dataset-name" class="dataset-badge-title">No Dataset Loaded</span>
+            <span id="loaded-dataset-rows" class="dataset-badge-subtitle">Upload a file to start</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+    
+    <!-- Main Analytical Workspace -->
+    <main class="main-viewport">
+      
+      <header class="main-header">
+        <div class="page-title">
+          <i class="fa-solid fa-chart-bar" id="header-icon" style="color: var(--accent-color);"></i>
+          <span id="header-title-text">Welcome Dashboard</span>
+        </div>
+        <div class="header-actions">
+          <div class="theme-selector-wrapper" style="display: flex; align-items: center; gap: 8px;">
+            <i class="fa-solid fa-palette" style="color: var(--primary-color); font-size: 14px;"></i>
+            <select id="theme-selector" class="custom-select btn-sm" onchange="changeTheme(this.value)" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 4px 8px; font-weight: 500; cursor: pointer; outline: none;">
+              <option value="indigo">Indigo Glow</option>
+              <option value="cyberpunk">Cyberpunk Neon</option>
+              <option value="emerald">Emerald Dawn</option>
+              <option value="solar">Solar Flare</option>
+              <option value="graphite">Sleek Graphite</option>
+            </select>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="triggerFileUpload()">
+            <i class="fa-solid fa-upload"></i> Load File
+          </button>
+          <input type="file" id="file-uploader" style="display: none;" accept=".csv,.xlsx,.xls" onchange="handleFileSelect(event)">
+        </div>
+      </header>
+      
+      <!-- Panel Workspace Containers -->
+      <div class="panel-container">
+        
+        <!-- Welcome Screen -->
+        <section id="tab-welcome" class="tab-content active">
+          <div class="welcome-grid">
+            <div class="welcome-hero">
+              <h1>In-Browser AI Data Analyst & BI Studio</h1>
+              <p>Upload a CSV or Excel spreadsheet and instantly access professional database tooling. Query with SQL, run multi-dimensional pivot aggregates, design responsive visualizations, and get automated storytelling with a simulated AI.</p>
+              
+              <div class="welcome-features">
+                <div class="welcome-feature-item">
+                  <div class="welcome-feature-icon"><i class="fa-solid fa-bolt"></i></div>
+                  <div class="welcome-feature-text">
+                    <h4>SQL Playground</h4>
+                    <p>Run standard SQL queries in-browser on CSV structures.</p>
+                  </div>
+                </div>
+                <div class="welcome-feature-item">
+                  <div class="welcome-feature-icon"><i class="fa-solid fa-table"></i></div>
+                  <div class="welcome-feature-text">
+                    <h4>Pivot Wizard</h4>
+                    <p>Compile cross-tab aggregates, filters, and matrices.</p>
+                  </div>
+                </div>
+                <div class="welcome-feature-item">
+                  <div class="welcome-feature-icon"><i class="fa-solid fa-palette"></i></div>
+                  <div class="welcome-feature-text">
+                    <h4>BI Dashboard</h4>
+                    <p>Design charts and KPI cards, exportable as PNG/SVG.</p>
+                  </div>
+                </div>
+                <div class="welcome-feature-item">
+                  <div class="welcome-feature-icon"><i class="fa-solid fa-comments"></i></div>
+                  <div class="welcome-feature-text">
+                    <h4>AI Chat Insight</h4>
+                    <p>Extract narrative patterns and correlations from data.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="glass-card" style="display: flex; flex-direction: column; justify-content: center;">
+              <div class="upload-card" onclick="triggerFileUpload()" id="drop-zone">
+                <i class="fa-solid fa-cloud-arrow-up upload-icon"></i>
+                <h3 class="upload-title">Drag & Drop Dataset</h3>
+                <p class="upload-desc">Supports Excel spreadsheets (.xlsx, .xls) and standard text files (.csv)</p>
+                <button class="btn btn-accent btn-sm">Select File</button>
+              </div>
+              
+              <div class="samples-divider">
+                <span>OR LOAD SAMPLE DATASETS</span>
+              </div>
+              
+              <div class="samples-container">
+                <button class="sample-button" onclick="loadSample('spotify')">
+                  <div class="sample-icon-box sample-spotify"><i class="fa-brands fa-spotify"></i></div>
+                  <div class="sample-btn-content">
+                    <span class="sample-btn-title">Spotify Trends 2024</span>
+                    <span class="sample-btn-subtitle">Track streams, genres, energy ratings, and release dates</span>
+                  </div>
+                </button>
+                <button class="sample-button" onclick="loadSample('ecommerce')">
+                  <div class="sample-icon-box sample-ecommerce"><i class="fa-solid fa-cart-shopping"></i></div>
+                  <div class="sample-btn-content">
+                    <span class="sample-btn-title">Retail E-Commerce Orders</span>
+                    <span class="sample-btn-subtitle">Analyze transaction revenue, product categories, and profit margins</span>
+                  </div>
+                </button>
+                <button class="sample-button" onclick="loadSample('inventory')">
+                  <div class="sample-icon-box sample-inventory"><i class="fa-solid fa-boxes-stacked"></i></div>
+                  <div class="sample-btn-content">
+                    <span class="sample-btn-title">Hardware Warehouse Stock</span>
+                    <span class="sample-btn-subtitle">Review SKU counts, retail pricing, restock thresholds, and warehouses</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+        
+        <!-- Data Hub & Profile Panel -->
+        <section id="tab-datahub" class="tab-content">
+          <div class="data-hub-container">
+            <!-- Left Side Data Profiler & Controls -->
+            <div style="display: flex; flex-direction: column; gap: 20px; align-self: flex-start; width: 100%;">
+              <!-- Schema Profile Card -->
+              <div class="glass-card">
+                <h3 style="font-size: 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+                  <i class="fa-solid fa-chart-pie" style="color: var(--primary-color);"></i> Schema Profile
+                </h3>
+                <div class="data-profile-list" id="profile-metric-list">
+                  <div style="color: var(--text-muted); text-align: center; padding: 24px;">
+                    No dataset loaded. Choose a sample or upload a file.
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Outlier Diagnostics Card -->
+              <div class="glass-card">
+                <h3 style="font-size: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                  <i class="fa-solid fa-triangle-exclamation" style="color: var(--danger);"></i> Outlier Diagnostics
+                </h3>
+                <div id="outlier-summary-list" style="font-size: 12px; display: flex; flex-direction: column; gap: 8px;">
+                  <div style="color: var(--text-muted); text-align: center; padding: 12px;">No active data outliers profiled.</div>
+                </div>
+              </div>
+              
+              <!-- Smart Columns Generator Card -->
+              <div class="glass-card">
+                <h3 style="font-size: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                  <i class="fa-solid fa-lightbulb" style="color: var(--warning);"></i> Smart Columns
+                </h3>
+                <div style="display: flex; flex-direction: column; gap: 10px; font-size: 12px;">
+                  <div class="select-group">
+                    <label style="font-size: 11px; color: var(--text-muted);">Source Date Column</label>
+                    <select id="smart-date-col" class="custom-select" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; margin-top: 4px;"></select>
+                  </div>
+                  <div class="select-group">
+                    <label style="font-size: 11px; color: var(--text-muted);">Extraction Part</label>
+                    <select id="smart-date-part" class="custom-select" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; margin-top: 4px;">
+                      <option value="dayofweek">Day of Week (e.g. Friday)</option>
+                      <option value="month">Month Name (e.g. October)</option>
+                      <option value="year">Year (e.g. 2024)</option>
+                    </select>
+                  </div>
+                  <button class="btn btn-accent btn-sm" onclick="generateSmartDateColumn()" style="margin-top: 6px; width: 100%;">
+                    <i class="fa-solid fa-plus"></i> Append Smart Column
+                  </button>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Right Side Table View & Cleaner -->
+            <div class="glass-card data-grid-card">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="font-size: 16px;">Dataset Viewport</h3>
+                <span class="btn btn-secondary btn-sm" onclick="toggleCleanerPanel()">
+                  <i class="fa-solid fa-wand-magic-sparkles"></i> Data Cleaner
+                </span>
+              </div>
+              
+              <!-- Cleaner actions -->
+              <div class="data-cleaner-box" id="cleaner-panel" style="display: none;">
+                <button class="btn btn-secondary btn-sm" onclick="cleanData('dropna')">
+                  <i class="fa-solid fa-eraser"></i> Drop Null Rows
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="cleanData('fillna')">
+                  <i class="fa-solid fa-fill-drip"></i> Fill Nulls with Average
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="cleanData('dropdupes')">
+                  <i class="fa-solid fa-copy"></i> Deduplicate Rows
+                </button>
+              </div>
+              
+              <div class="table-wrapper">
+                <table id="main-data-table">
+                  <thead>
+                    <tr><th>Load data to view columns</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>No records in table...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <div class="table-pagination">
+                <span id="table-row-counter">Showing 0-0 of 0 entries</span>
+                <div style="display: flex; gap: 8px;">
+                  <button class="btn btn-secondary btn-sm" id="table-btn-prev" onclick="prevTablePage()" disabled><i class="fa-solid fa-chevron-left"></i> Previous</button>
+                  <button class="btn btn-secondary btn-sm" id="table-btn-next" onclick="nextTablePage()" disabled>Next <i class="fa-solid fa-chevron-right"></i></button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        
+        <!-- SQL Playground Panel -->
+        <section id="tab-sqllab" class="tab-content">
+          <div class="sql-lab-grid">
+            <!-- Left Side Schema Explorer -->
+            <div class="glass-card schema-explorer" style="height: 550px;">
+              <div class="schema-header" style="margin-bottom: 8px;">
+                <i class="fa-solid fa-folder-tree" style="color: var(--accent-color);"></i>
+                <span>Database Tables</span>
+              </div>
+              <div class="schema-items" id="sql-schema-list" style="max-height: 180px; overflow-y: auto; margin-bottom: 12px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                <div style="color: var(--text-muted); font-size: 12px; padding: 8px;">
+                  Table structure will appear here.
+                </div>
+              </div>
+              
+              <div class="schema-header" style="margin-bottom: 8px;">
+                <i class="fa-solid fa-star" style="color: var(--warning);"></i>
+                <span>Saved Queries</span>
+              </div>
+              <div class="saved-queries-list" id="sql-saved-list" style="max-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                <div style="color: var(--text-muted); font-size: 11px; font-style: italic; padding: 4px 8px;">No saved queries yet.</div>
+              </div>
+              
+              <div class="schema-header" style="margin-bottom: 8px;">
+                <i class="fa-solid fa-clock-rotate-left" style="color: var(--primary-color);"></i>
+                <span>Recent History</span>
+              </div>
+              <div class="history-queries-list" id="sql-history-list" style="max-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;">
+                <div style="color: var(--text-muted); font-size: 11px; font-style: italic; padding: 4px 8px;">No recent history.</div>
+              </div>
+            </div>
+            
+            <!-- Right Side Editor and Results -->
+            <div class="sql-editor-container">
+              <div class="glass-card" style="padding: 18px;">
+                <!-- Collapsible Visual Query Builder Drawer -->
+                <div class="query-builder-drawer" style="margin-bottom: 14px;">
+                  <button class="qb-toggle-btn" onclick="toggleQueryBuilder()" style="width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-main); font-size: 13px; font-weight: 600; cursor: pointer; outline: none; transition: var(--transition);">
+                    <span><i class="fa-solid fa-wand-magic-sparkles" style="color: var(--accent-color); margin-right: 8px;"></i>No-Code Visual Query Builder</span>
+                    <i class="fa-solid fa-chevron-down" id="qb-chevron-icon" style="transition: var(--transition); font-size: 11px;"></i>
+                  </button>
+                  <div class="qb-content" id="qb-content-drawer" style="display: none; padding: 16px; background: rgba(8, 12, 20, 0.4); border: 1px solid var(--border-color); border-top: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; flex-direction: column; gap: 12px; margin-top: -1px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+                      <div class="select-group">
+                        <label style="font-size: 11px; color: var(--text-muted);">Filter Column</label>
+                        <select id="qb-filter-col" class="custom-select" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; margin-top: 4px; font-size: 12px; height: 32px;"></select>
+                      </div>
+                      <div class="select-group">
+                        <label style="font-size: 11px; color: var(--text-muted);">Operator</label>
+                        <select id="qb-filter-op" class="custom-select" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; margin-top: 4px; font-size: 12px; height: 32px;">
+                          <option value="=">=</option>
+                          <option value="!=">!=</option>
+                          <option value=">">&gt;</option>
+                          <option value="<">&lt;</option>
+                          <option value="LIKE">LIKE (Contains)</option>
+                        </select>
+                      </div>
+                      <div class="select-group">
+                        <label style="font-size: 11px; color: var(--text-muted);">Filter Value</label>
+                        <input type="text" id="qb-filter-val" placeholder="Value..." style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; margin-top: 4px; font-size: 12px; height: 32px;">
+                      </div>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1.5fr 1fr 0.5fr; gap: 12px; align-items: end;">
+                      <div class="select-group">
+                        <label style="font-size: 11px; color: var(--text-muted);">Sort By Column</label>
+                        <select id="qb-sort-col" class="custom-select" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; margin-top: 4px; font-size: 12px; height: 32px;"></select>
+                      </div>
+                      <div class="select-group">
+                        <label style="font-size: 11px; color: var(--text-muted);">Direction</label>
+                        <select id="qb-sort-dir" class="custom-select" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; margin-top: 4px; font-size: 12px; height: 32px;">
+                          <option value="DESC">DESC (Highest first)</option>
+                          <option value="ASC">ASC (Lowest first)</option>
+                        </select>
+                      </div>
+                      <div class="select-group">
+                        <label style="font-size: 11px; color: var(--text-muted);">Limit Rows</label>
+                        <input type="number" id="qb-limit" value="10" min="1" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; margin-top: 4px; font-size: 12px; height: 32px;">
+                      </div>
+                    </div>
+                    
+                    <button class="btn btn-accent btn-sm" onclick="compileVisualQuery()" style="align-self: flex-start; margin-top: 8px;">
+                      <i class="fa-solid fa-code"></i> Generate SQL Statement
+                    </button>
+                  </div>
+                </div>
+                
+                <div class="sql-textarea-wrapper">
+                  <textarea id="sql-editor-textarea" class="sql-textarea" placeholder="SELECT * FROM data LIMIT 10;"></textarea>
+                </div>
+                
+                <div class="sql-actions" style="margin-top: 12px;">
+                  <div class="sql-snippets">
+                    <button class="sql-snippet-btn" onclick="insertSqlTemplate('select')">SELECT *</button>
+                    <button class="sql-snippet-btn" onclick="insertSqlTemplate('groupby')">GROUP BY</button>
+                    <button class="sql-snippet-btn" onclick="insertSqlTemplate('filter')">WHERE FILTER</button>
+                    <button class="sql-snippet-btn" onclick="insertSqlTemplate('sort')">ORDER BY</button>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button class="btn btn-secondary btn-sm" onclick="saveCurrentQuery()" title="Save Current Query" style="padding: 6px 10px;">
+                      <i class="fa-regular fa-star" id="star-query-icon" style="color: var(--warning);"></i>
+                    </button>
+                    <button class="btn btn-primary btn-sm" onclick="executeSqlQuery()">
+                      <i class="fa-solid fa-play"></i> Run Query (F8)
+                    </button>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="glass-card sql-result-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                  <h3 style="font-size: 15px;">Query Console Results</h3>
+                  <div id="sql-export-row" style="display: none; gap: 8px;">
+                    <button class="btn btn-secondary btn-sm" onclick="visualizeSqlResults()"><i class="fa-solid fa-chart-pie"></i> Visualise Output</button>
+                    <button class="btn btn-secondary btn-sm" onclick="exportSqlToCsv()"><i class="fa-solid fa-download"></i> CSV Export</button>
+                  </div>
+                </div>
+                
+                <div class="table-wrapper" style="margin: 0; max-height: 240px;" id="sql-result-table-wrapper">
+                  <table id="sql-result-table">
+                    <thead>
+                      <tr><th>Run a query to view results</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr><td>SQL Console is waiting...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        
+        <!-- Pivot Table Panel -->
+        <section id="tab-pivot" class="tab-content">
+          <div class="pivot-workbench">
+            <div class="glass-card pivot-selectors">
+              <h3 style="font-size: 15px; margin-bottom: 12px;"><i class="fa-solid fa-sliders" style="color: var(--primary-color);"></i> Pivot Pivot Config</h3>
+              
+              <div class="select-group">
+                <label>Row Dimension</label>
+                <select id="pivot-row-select" class="custom-select"><option>None</option></select>
+              </div>
+              
+              <div class="select-group">
+                <label>Column Dimension</label>
+                <select id="pivot-col-select" class="custom-select"><option>None</option></select>
+              </div>
+              
+              <div class="select-group">
+                <label>Value Field</label>
+                <select id="pivot-val-select" class="custom-select"><option>None</option></select>
+              </div>
+              
+              <div class="select-group">
+                <label>Aggregation Function</label>
+                <select id="pivot-agg-select" class="custom-select">
+                  <option value="SUM">SUM</option>
+                  <option value="AVG">AVERAGE</option>
+                  <option value="COUNT">COUNT</option>
+                  <option value="MAX">MAXIMUM</option>
+                  <option value="MIN">MINIMUM</option>
+                </select>
+              </div>
+              
+              <div class="select-group">
+                <label>Inline Chart Visualization</label>
+                <select id="pivot-chart-type" class="custom-select">
+                  <option value="bar">Grouped Bar Chart</option>
+                  <option value="stacked">Stacked Bar Chart</option>
+                  <option value="line">Grouped Line Chart</option>
+                  <option value="none">No Chart Visualization</option>
+                </select>
+              </div>
+              
+              <button class="btn btn-accent btn-sm" style="margin-top: 8px; width: 100%;" onclick="generatePivotTable()">
+                <i class="fa-solid fa-rotate"></i> Compile Pivot Table
+              </button>
+            </div>
+            
+            <div class="glass-card pivot-output">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="font-size: 15px;">Cross-Tab Pivot Matrix</h3>
+                <div style="display: flex; gap: 8px;" id="pivot-export-actions">
+                  <!-- Actions injected here -->
+                </div>
+              </div>
+              
+              <div class="pivot-table-container" style="flex-grow: 1; overflow-x: auto;">
+                <table id="pivot-matrix-table" class="pivot-table">
+                  <thead><tr><th>Select configuration values to compute pivot tables</th></tr></thead>
+                  <tbody><tr><td>Waiting for matrix compile...</td></tr></tbody>
+                </table>
+              </div>
+              <div id="pivot-chart-viewport" style="display: none; border-top: 1px solid var(--border-color); padding-top: 20px; margin-top: 20px; min-height: 280px; width: 100%;"></div>
+            </div>
+          </div>
+        </section>
+        
+        <!-- Dashboard Studio Panel -->
+        <section id="tab-dashboard" class="tab-content">
+          <div class="dashboard-actions-row">
+            <button class="btn btn-primary btn-sm" onclick="openWidgetModal()">
+              <i class="fa-solid fa-plus"></i> Add Metric / Chart
+            </button>
+          </div>
+          
+          <!-- KPI Indicator Cards Row -->
+          <div class="dashboard-grid col-span-4" id="dashboard-kpi-row" style="margin-bottom: 24px;">
+            <!-- KPI cards injected here dynamically -->
+          </div>
+          
+          <!-- Chart Visual Grid -->
+          <div class="dashboard-grid col-span-4" id="dashboard-chart-grid">
+            <!-- Charts injected here dynamically -->
+          </div>
+        </section>
+        
+        <!-- AI Copilot Panel -->
+        <section id="tab-aianalyst" class="tab-content">
+          <div class="ai-agent-layout">
+            <!-- Left Side: Automated Story -->
+            <div class="glass-card ai-story-side">
+              <h3 style="font-size: 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-feather-pointed" style="color: var(--primary-color);"></i>
+                <span>Automatic Data Storyboard</span>
+              </h3>
+              <div class="story-content" id="ai-storyboard-content">
+                <p style="color: var(--text-muted);">Load a dataset to compile an automatic data narrative and insight breakdown.</p>
+              </div>
+            </div>
+            
+            <!-- Right Side: AI Chat assistant -->
+            <div class="ai-chat-side">
+              <div class="chat-header">
+                <div class="chat-avatar"><i class="fa-solid fa-robot"></i></div>
+                <div class="chat-status">
+                  <span class="chat-name">Athena AI Data Analyst</span>
+                  <span class="chat-subtext">Online - Processing memory engine</span>
+                </div>
+              </div>
+              
+              <div class="chat-messages" id="chat-bubble-messages">
+                <div class="message-bubble message-assistant">
+                  Hello! I am Athena, your automated Data Analyst. Ask me details about your loaded dataset! Try asking for summaries, maximum values, or category comparisons.
+                </div>
+              </div>
+              
+              <div class="chat-suggestions-grid" id="chat-prompt-suggestions">
+                <!-- Suggestions dynamically injected -->
+              </div>
+              
+              <div class="chat-input-area">
+                <input type="text" id="chat-input-field" class="chat-input" placeholder="e.g. Find the highest values, calculate totals, compare genres..." onkeydown="handleChatKeyPress(event)">
+                <button class="btn btn-primary" onclick="submitChatQuery()"><i class="fa-solid fa-paper-plane"></i></button>
+              </div>
+            </div>
+          </div>
+        </section>
+        
+      </div>
+      
+    </main>
+  </div>
+  
+  <!-- Chart Widget Creator Modal -->
+  <div class="modal-overlay" id="widget-modal">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3 class="modal-title">Add Widget / Dashboard Graph</h3>
+        <button class="modal-close" onclick="closeWidgetModal()">&times;</button>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <div class="select-group">
+          <label>Widget Title</label>
+          <input type="text" id="widget-title-input" class="custom-select" style="background-color: var(--bg-panel-solid);" placeholder="Enter descriptive title...">
+        </div>
+        
+        <div class="select-group">
+          <label>Chart Graphic Type</label>
+          <select id="widget-type-select" class="custom-select" style="background-color: var(--bg-panel-solid);">
+            <option value="bar">Bar Chart</option>
+            <option value="line">Line Chart</option>
+            <option value="area">Area Chart</option>
+            <option value="donut">Donut Chart</option>
+            <option value="scatter">Scatter Plot</option>
+          </select>
+        </div>
+        
+        <div class="select-group">
+          <label>X-Axis (Dimension)</label>
+          <select id="widget-xaxis-select" class="custom-select" style="background-color: var(--bg-panel-solid);"></select>
+        </div>
+        
+        <div class="select-group">
+          <label>Y-Axis (Metrics Value)</label>
+          <select id="widget-yaxis-select" class="custom-select" style="background-color: var(--bg-panel-solid);"></select>
+        </div>
+        
+        <div class="select-group">
+          <label>Aggregate Method (For duplicates)</label>
+          <select id="widget-agg-select" class="custom-select" style="background-color: var(--bg-panel-solid);">
+            <option value="SUM">SUM</option>
+            <option value="AVG">AVERAGE</option>
+            <option value="COUNT">COUNT</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="closeWidgetModal()">Cancel</button>
+        <button class="btn btn-accent btn-sm" onclick="addNewChartWidget()">Create Widget</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SQL Result Visualizer Modal -->
+  <div class="modal-overlay" id="sql-vis-modal">
+    <div class="modal-container" style="width: 600px;">
+      <div class="modal-header">
+        <h3 class="modal-title">SQL Output Plotter</h3>
+        <button class="modal-close" onclick="closeSqlVisModal()">&times;</button>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <div class="select-group">
+          <label>Select Dimension (X-Axis)</label>
+          <select id="sql-vis-xaxis" class="custom-select" style="background-color: var(--bg-panel-solid);"></select>
+        </div>
+        <div class="select-group">
+          <label>Select Metric Value (Y-Axis)</label>
+          <select id="sql-vis-yaxis" class="custom-select" style="background-color: var(--bg-panel-solid);"></select>
+        </div>
+        <div class="select-group">
+          <label>Visual Style</label>
+          <select id="sql-vis-type" class="custom-select" style="background-color: var(--bg-panel-solid);">
+            <option value="bar">Bar Chart</option>
+            <option value="line">Line Chart</option>
+            <option value="donut">Donut Chart</option>
+          </select>
+        </div>
+        <div id="sql-vis-container" style="min-height: 250px; background-color: rgba(8, 12, 20, 0.4); border-radius: 8px;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="closeSqlVisModal()">Done</button>
+        <button class="btn btn-accent btn-sm" onclick="renderSqlVisChart()">Replot Chart</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loaded dataset files -->
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
