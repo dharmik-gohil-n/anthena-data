@@ -35,6 +35,7 @@ let sqlOutput = [];
 let sqlSavedQueries = [];
 let colOutlierStats = {};
 let activeSqlParams = [];
+let activeFilters = [];
 
 // Dashboard widget configurations
 let dashboardCharts = [];
@@ -328,6 +329,11 @@ function loadSample(sampleId) {
 // Post-dataset load configuration
 function initLoadedDataset() {
   tablePage = 0;
+  activeFilters = [];
+  const chipsContainer = document.getElementById("filter-chips-container");
+  if (chipsContainer) {
+    renderFilterChips();
+  }
   profileSchema();
   updateSidebarBadge();
   initSelectDropdowns();
@@ -559,6 +565,17 @@ function initSelectDropdowns() {
       });
     }
   }
+
+  // Populate filter columns dropdown
+  const filterColSelect = document.getElementById("filter-col-select");
+  if (filterColSelect) {
+    filterColSelect.innerHTML = "";
+    dataProfile.columns.forEach(col => {
+      filterColSelect.innerHTML += `<option value="${col.name}">${col.name}</option>`;
+    });
+    // Set initial dropdown value selectors
+    handleFilterColChange();
+  }
 }
 
 // Render data viewport table (paginated)
@@ -642,47 +659,50 @@ function toggleCleanerPanel() {
 
 // Clean dataset operations
 function cleanData(operation) {
-  if (activeData.length === 0) return;
+  if (currentDataset.length === 0) return;
   
   if (operation === 'dropna') {
-    const prevCount = activeData.length;
-    activeData = activeData.filter(row => {
+    const prevCount = currentDataset.length;
+    currentDataset = currentDataset.filter(row => {
       return Object.values(row).every(val => val !== null && val !== undefined && val !== "");
     });
-    alert(`Cleaned: Dropped ${prevCount - activeData.length} records containing null fields.`);
+    const droppedCount = prevCount - currentDataset.length;
+    applyActiveFilters();
+    alert(`Cleaned: Dropped ${droppedCount} records containing null fields.`);
   } 
   
   else if (operation === 'fillna') {
-    // Fill null numerical columns with column average
+    // Fill null numerical columns with column average using currentDataset
+    let filledCount = 0;
     dataProfile.numericCols.forEach(col => {
-      const numbers = activeData.map(r => r[col]).filter(v => typeof v === 'number');
+      const numbers = currentDataset.map(r => r[col]).filter(v => typeof v === 'number');
       if (numbers.length === 0) return;
       const avg = numbers.reduce((a, b) => a + b, 0) / numbers.length;
       
-      activeData.forEach(row => {
+      currentDataset.forEach(row => {
         if (row[col] === null || row[col] === undefined || row[col] === "") {
           row[col] = avg;
+          filledCount++;
         }
       });
     });
+    applyActiveFilters();
     alert("Cleaned: Substituted null numerical records with the average metric values.");
   } 
   
   else if (operation === 'dropdupes') {
-    const prevCount = activeData.length;
+    const prevCount = currentDataset.length;
     const seen = new Set();
-    activeData = activeData.filter(row => {
+    currentDataset = currentDataset.filter(row => {
       const serialized = JSON.stringify(row);
       if (seen.has(serialized)) return false;
       seen.add(serialized);
       return true;
     });
-    alert(`Cleaned: Deduplicated dataset. Removed ${prevCount - activeData.length} duplicates.`);
+    const removedCount = prevCount - currentDataset.length;
+    applyActiveFilters();
+    alert(`Cleaned: Deduplicated dataset. Removed ${removedCount} duplicates.`);
   }
-  
-  profileSchema();
-  renderDataTable();
-  updateSidebarBadge();
 }
 
 // SQL Lab Panel Operations
@@ -2204,6 +2224,266 @@ function handleParamInput(name) {
       chip.innerHTML = `<i class="fa-solid fa-circle-minus"></i><span>${name}</span>`;
     }
   }
+}
+
+// Multi-Tag Filtering Handlers
+function handleFilterColChange() {
+  const colName = document.getElementById("filter-col-select").value;
+  const valContainer = document.getElementById("filter-val-input-container");
+  if (!colName || !valContainer) return;
+  
+  const colObj = dataProfile.columns.find(c => c.name === colName);
+  const opSelect = document.getElementById("filter-op-select");
+  
+  if (!colObj) return;
+  
+  // Set default operator list based on type
+  if (colObj.type === "Number") {
+    opSelect.innerHTML = `
+      <option value="=">=</option>
+      <option value="!=">!=</option>
+      <option value=">">&gt;</option>
+      <option value="<">&lt;</option>
+      <option value=">=">&gt;=</option>
+      <option value="<=">&lt;=</option>
+    `;
+    valContainer.innerHTML = `<input type="number" id="filter-val-input" placeholder="e.g. 50" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; font-size: 12px; height: 100%;">`;
+  } else if (colObj.type === "Date") {
+    opSelect.innerHTML = `
+      <option value="=">=</option>
+      <option value="!=">!=</option>
+      <option value=">">&gt;</option>
+      <option value="<">&lt;</option>
+      <option value=">=">&gt;=</option>
+      <option value="<=">&lt;=</option>
+    `;
+    valContainer.innerHTML = `<input type="date" id="filter-val-input" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; font-size: 12px; height: 100%;">`;
+  } else {
+    // Text columns
+    opSelect.innerHTML = `
+      <option value="=">=</option>
+      <option value="!=">!=</option>
+      <option value="contains">Contains</option>
+    `;
+    
+    // For small number of unique categories, show a select dropdown of options!
+    if (colObj.unique <= 30) {
+      // Extract unique sorted values
+      const uniqueVals = [...new Set(currentDataset.map(r => r[colName]))]
+        .filter(v => v !== null && v !== undefined && v !== "")
+        .sort();
+      
+      let optHtml = `<select id="filter-val-input" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; font-size: 12px; height: 100%; cursor: pointer;">`;
+      uniqueVals.forEach(v => {
+        optHtml += `<option value="${v.replace(/"/g, '&quot;')}">${v}</option>`;
+      });
+      optHtml += `</select>`;
+      valContainer.innerHTML = optHtml;
+    } else {
+      valContainer.innerHTML = `<input type="text" id="filter-val-input" placeholder="e.g. Pop" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; font-size: 12px; height: 100%;">`;
+    }
+  }
+}
+
+function addFilterBadge() {
+  const colSelect = document.getElementById("filter-col-select");
+  const opSelect = document.getElementById("filter-op-select");
+  const valInput = document.getElementById("filter-val-input");
+  
+  if (!colSelect || !opSelect || !valInput) return;
+  
+  const column = colSelect.value;
+  const operator = opSelect.value;
+  const value = valInput.value.trim();
+  
+  if (value === "") {
+    alert("Please enter or select a filter value.");
+    return;
+  }
+  
+  // Prevent duplicate filter rules
+  const isDuplicate = activeFilters.some(f => f.column === column && f.operator === operator && f.value === value);
+  if (isDuplicate) {
+    alert("This filter rule is already applied.");
+    return;
+  }
+  
+  const newFilter = {
+    id: "filter-" + Date.now(),
+    column,
+    operator,
+    value
+  };
+  
+  activeFilters.push(newFilter);
+  
+  // Re-run filter and render
+  applyActiveFilters();
+  renderFilterChips();
+  
+  // Reset input field if it was a text input
+  if (valInput.tagName.toLowerCase() === "input" && valInput.type !== "date") {
+    valInput.value = "";
+  }
+}
+
+function removeFilterBadge(id) {
+  const chip = document.getElementById(id);
+  if (chip) {
+    chip.classList.add("removing");
+    // Wait for the exit animation to complete (240ms) before updating state
+    setTimeout(() => {
+      activeFilters = activeFilters.filter(f => f.id !== id);
+      applyActiveFilters();
+      renderFilterChips();
+    }, 240);
+  } else {
+    activeFilters = activeFilters.filter(f => f.id !== id);
+    applyActiveFilters();
+    renderFilterChips();
+  }
+}
+
+function clearAllFilters() {
+  const chips = document.querySelectorAll(".filter-chip");
+  if (chips.length > 0) {
+    chips.forEach(chip => chip.classList.add("removing"));
+    setTimeout(() => {
+      activeFilters = [];
+      applyActiveFilters();
+      renderFilterChips();
+    }, 240);
+  } else {
+    activeFilters = [];
+    applyActiveFilters();
+    renderFilterChips();
+  }
+}
+
+function applyActiveFilters() {
+  let filtered = JSON.parse(JSON.stringify(currentDataset)); // Deep copy from core dataset
+  
+  activeFilters.forEach(f => {
+    filtered = filtered.filter(row => {
+      let rawVal = row[f.column];
+      if (rawVal === null || rawVal === undefined) return false;
+      
+      const colObj = dataProfile.columns.find(c => c.name === f.column);
+      const isNum = colObj ? colObj.type === "Number" : false;
+      const isDate = colObj ? colObj.type === "Date" : false;
+      
+      if (isNum) {
+        const rowNum = Number(rawVal);
+        const filterNum = Number(f.value);
+        if (isNaN(rowNum) || isNaN(filterNum)) return false;
+        
+        switch (f.operator) {
+          case "=": return rowNum === filterNum;
+          case "!=": return rowNum !== filterNum;
+          case ">": return rowNum > filterNum;
+          case "<": return rowNum < filterNum;
+          case ">=": return rowNum >= filterNum;
+          case "<=": return rowNum <= filterNum;
+          default: return true;
+        }
+      } else if (isDate) {
+        const rowDate = Date.parse(rawVal);
+        const filterDate = Date.parse(f.value);
+        if (isNaN(rowDate) || isNaN(filterDate)) return false;
+        
+        switch (f.operator) {
+          case "=": return rowDate === filterDate;
+          case "!=": return rowDate !== filterDate;
+          case ">": return rowDate > filterDate;
+          case "<": return rowDate < filterDate;
+          case ">=": return rowDate >= filterDate;
+          case "<=": return rowDate <= filterDate;
+          default: return true;
+        }
+      } else {
+        // String text processing
+        const rowStr = String(rawVal).toLowerCase().trim();
+        const filterStr = String(f.value).toLowerCase().trim();
+        
+        switch (f.operator) {
+          case "=": return rowStr === filterStr;
+          case "!=": return rowStr !== filterStr;
+          case "contains": return rowStr.includes(filterStr);
+          default: return true;
+        }
+      }
+    });
+  });
+  
+  activeData = filtered;
+  tablePage = 0; // reset to page 1
+  renderDataTable();
+  updateSidebarBadge();
+  
+  // Re-run outline calculation and profiler counters
+  colOutlierStats = {};
+  dataProfile.numericCols.forEach(col => {
+    const vals = activeData.map(r => Number(r[col])).filter(v => !isNaN(v));
+    if (vals.length > 0) {
+      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const sqDiffs = vals.map(v => Math.pow(v - mean, 2));
+      const stdDev = Math.sqrt(sqDiffs.reduce((a, b) => a + b, 0) / vals.length) || 1;
+      
+      const outliers = activeData.filter(r => {
+        const val = Number(r[col]);
+        return !isNaN(val) && Math.abs((val - mean) / stdDev) > 2;
+      }).length;
+      
+      colOutlierStats[col] = { mean, stdDev, count: outliers };
+    }
+  });
+  
+  renderProfileUi();
+  renderOutliersUi();
+}
+
+function renderFilterChips() {
+  const container = document.getElementById("filter-chips-container");
+  const clearBtn = document.getElementById("clear-filters-btn");
+  if (!container) return;
+  
+  if (activeFilters.length === 0) {
+    container.innerHTML = `<span style="font-size: 11px; color: var(--text-muted); font-style: italic;">No active filters. Displaying full dataset.</span>`;
+    if (clearBtn) clearBtn.style.display = "none";
+    return;
+  }
+  
+  if (clearBtn) clearBtn.style.display = "block";
+  
+  let html = "";
+  activeFilters.forEach(f => {
+    let opLabel = f.operator;
+    if (f.operator === "contains") opLabel = "contains";
+    
+    // Format large numbers in chips for aesthetics
+    let displayVal = f.value;
+    if (!isNaN(displayVal) && displayVal !== "") {
+      const num = Number(displayVal);
+      if (num >= 1e6) {
+        displayVal = (num/1e6).toFixed(0) + "M";
+      } else if (num >= 1e3) {
+        displayVal = (num/1e3).toFixed(0) + "K";
+      } else {
+        displayVal = num.toLocaleString();
+      }
+    }
+    
+    html += `
+      <div class="filter-chip" id="${f.id}">
+        <span><strong>${f.column}</strong> ${opLabel} <em>"${displayVal}"</em></span>
+        <div class="filter-chip-remove" onclick="removeFilterBadge('${f.id}')" title="Remove filter">
+          <i class="fa-solid fa-xmark"></i>
+        </div>
+      </div>
+    `;
+  });
+  
+  container.innerHTML = html;
 }
 
 
