@@ -34,6 +34,7 @@ let sqlHistory = [];
 let sqlOutput = [];
 let sqlSavedQueries = [];
 let colOutlierStats = {};
+let activeSqlParams = [];
 
 // Dashboard widget configurations
 let dashboardCharts = [];
@@ -74,6 +75,25 @@ window.addEventListener("DOMContentLoaded", () => {
       executeSqlQuery();
     }
   });
+
+  // Watch for parameters in SQL editor text
+  document.getElementById("sql-editor-textarea").addEventListener("input", (e) => {
+    parseSqlParameters(e.target.value);
+  });
+
+  // Toggle forecasting field based on chart type selection
+  const typeSelect = document.getElementById("widget-type-select");
+  if (typeSelect) {
+    typeSelect.addEventListener("change", (e) => {
+      const container = document.getElementById("widget-forecast-container");
+      if (e.target.value === 'line' || e.target.value === 'area') {
+        container.style.display = "flex";
+      } else {
+        container.style.display = "none";
+        document.getElementById("widget-forecast-enable").checked = false;
+      }
+    });
+  }
 
   // Load saved and history queries from localStorage
   try {
@@ -733,10 +753,38 @@ function executeSqlQuery() {
   
   if (!query || activeData.length === 0) return;
   
+  let preparedQuery = query;
+  
+  // Replace active parameters with user inputs
+  let parametersBoundSuccessfully = true;
+  activeSqlParams.forEach(name => {
+    const input = document.getElementById(`param-input-${name}`);
+    const val = input ? input.value.trim() : "";
+    if (val === "") {
+      parametersBoundSuccessfully = false;
+    }
+    
+    // Check if it is a number or text, format quotes accordingly
+    let replacedVal = val;
+    if (isNaN(val) || val === "") {
+      if (!val.startsWith("'") && !val.endsWith("'")) {
+        replacedVal = `'${val.replace(/'/g, "''")}'`;
+      }
+    }
+    
+    const valRegex = new RegExp(`\\{\\{\\s*${name}\\s*\\}\\}`, 'g');
+    preparedQuery = preparedQuery.replace(valRegex, replacedVal);
+  });
+  
+  if (!parametersBoundSuccessfully && activeSqlParams.length > 0) {
+    alert("Please fill in all parameter values before executing the query.");
+    return;
+  }
+  
   // AlaSQL executes queries against Javascript memory structures.
   // We represent activeData array as the variable parameter "?" mapped in AlaSQL context.
   // To simulate query targets, we substitute the table word "data" with "?"
-  let preparedQuery = query.replace(/\bdata\b/gi, "?");
+  preparedQuery = preparedQuery.replace(/\bdata\b/gi, "?");
   
   try {
     const startTime = performance.now();
@@ -1138,7 +1186,11 @@ function renderSingleWidget(widget) {
   
   if (widget.agg !== "NONE") {
     // Perform AlaSQL group query
-    const sqlQuery = `SELECT [${widget.xaxis}] AS X, ${widget.agg}([${widget.yaxis}]) AS Y FROM ? GROUP BY [${widget.xaxis}] ORDER BY Y DESC`;
+    let orderBy = "Y DESC";
+    if (dataProfile.dateCols.includes(widget.xaxis) || widget.xaxis.toLowerCase().includes("date")) {
+      orderBy = `[${widget.xaxis}] ASC`;
+    }
+    const sqlQuery = `SELECT [${widget.xaxis}] AS X, ${widget.agg}([${widget.yaxis}]) AS Y FROM ? GROUP BY [${widget.xaxis}] ORDER BY ${orderBy}`;
     try {
       const aggResult = alasql(sqlQuery, [activeData]);
       chartData = aggResult.map(r => ({ x: r.X, y: Number(r.Y) || 0 }));
@@ -1153,10 +1205,64 @@ function renderSingleWidget(widget) {
       x: row[widget.xaxis],
       y: Number(row[widget.yaxis]) || 0
     }));
+    
+    // Sort dates if column represents timestamps
+    if (dataProfile.dateCols.includes(widget.xaxis) || widget.xaxis.toLowerCase().includes("date")) {
+      chartData.sort((a, b) => new Date(a.x) - new Date(b.x));
+    }
   }
   
   let xCategories = chartData.map(d => String(d.x));
   let yValues = chartData.map(d => d.y);
+  
+  let series = widget.type === 'donut' ? yValues : [{ name: widget.yaxis, data: yValues }];
+  
+  // Custom styling attributes for predictive bounds
+  let chartColors = widget.type === 'donut' ? themePalettes[currentTheme] : [themePalettes[currentTheme][0]];
+  let strokeOptions = { curve: 'smooth', width: 2 };
+  let fillOptions = undefined;
+  
+  if (widget.forecast && (widget.type === 'line' || widget.type === 'area') && yValues.length >= 3) {
+    const forecastPeriods = 6;
+    const forecastResults = calculateForecast(xCategories, yValues, forecastPeriods);
+    if (forecastResults) {
+      const isDateSeries = dataProfile.dateCols.includes(widget.xaxis) || widget.xaxis.toLowerCase().includes("date");
+      const futureDates = projectFutureDates(xCategories, forecastPeriods, isDateSeries);
+      
+      const extendedCategories = [...xCategories, ...futureDates];
+      const actualsData = [...yValues, ...Array(forecastPeriods).fill(null)];
+      const forecastData = [...Array(yValues.length - 1).fill(null), yValues[yValues.length - 1], ...forecastResults.futureY];
+      const upperData = [...Array(yValues.length - 1).fill(null), yValues[yValues.length - 1], ...forecastResults.futureUpper];
+      const lowerData = [...Array(yValues.length - 1).fill(null), yValues[yValues.length - 1], ...forecastResults.futureLower];
+      
+      series = [
+        { name: `${widget.yaxis} (Actual)`, type: widget.type, data: actualsData },
+        { name: `${widget.yaxis} (Forecast)`, type: 'line', data: forecastData },
+        { name: 'Upper Confidence Bound', type: 'area', data: upperData },
+        { name: 'Lower Confidence Bound', type: 'area', data: lowerData }
+      ];
+      
+      xCategories = extendedCategories;
+      
+      chartColors = [
+        themePalettes[currentTheme][0], 
+        themePalettes[currentTheme][0], 
+        themePalettes[currentTheme][1], 
+        '#0d1423'
+      ];
+      
+      strokeOptions = {
+        curve: 'smooth',
+        width: [3, 3, 1, 1],
+        dashArray: [0, 6, 4, 4]
+      };
+      
+      fillOptions = {
+        type: ['solid', 'solid', 'solid', 'solid'],
+        opacity: [1.0, 1.0, 0.15, 1.0]
+      };
+    }
+  }
   
   let options = {
     chart: {
@@ -1167,13 +1273,14 @@ function renderSingleWidget(widget) {
       toolbar: { show: true }
     },
     theme: { mode: 'dark' },
-    colors: widget.type === 'donut' ? themePalettes[currentTheme] : [themePalettes[currentTheme][0]],
-    stroke: { curve: 'smooth', width: 2 },
+    colors: chartColors,
+    stroke: strokeOptions,
+    fill: fillOptions,
     dataLabels: { enabled: false },
     plotOptions: {
       bar: { borderRadius: 4 }
     },
-    series: widget.type === 'donut' ? yValues : [{ name: widget.yaxis, data: yValues }],
+    series: widget.type === 'donut' ? yValues : series,
     labels: widget.type === 'donut' ? xCategories : undefined,
     xaxis: widget.type !== 'donut' ? { categories: xCategories } : undefined,
     grid: { borderColor: 'rgba(255,255,255,0.05)' }
@@ -1196,6 +1303,12 @@ function openWidgetModal() {
   const modal = document.getElementById("widget-modal");
   const xaxisSelect = document.getElementById("widget-xaxis-select");
   const yaxisSelect = document.getElementById("widget-yaxis-select");
+  
+  // Reset modal state
+  document.getElementById("widget-title-input").value = "";
+  document.getElementById("widget-type-select").value = "bar";
+  document.getElementById("widget-forecast-enable").checked = false;
+  document.getElementById("widget-forecast-container").style.display = "none";
   
   xaxisSelect.innerHTML = "";
   yaxisSelect.innerHTML = "";
@@ -1220,6 +1333,7 @@ function addNewChartWidget() {
   const xaxis = document.getElementById("widget-xaxis-select").value;
   const yaxis = document.getElementById("widget-yaxis-select").value;
   const agg = document.getElementById("widget-agg-select").value;
+  const forecast = document.getElementById("widget-forecast-enable").checked;
   
   const newWidget = {
     id: "w-" + Date.now(),
@@ -1227,7 +1341,8 @@ function addNewChartWidget() {
     type,
     xaxis,
     yaxis,
-    agg
+    agg,
+    forecast
   };
   
   dashboardCharts.push(newWidget);
@@ -1925,6 +2040,173 @@ function renderInlinePivotChart(uniqueRows, uniqueCols, pivotMap, aggregate, row
   pivotChart = new ApexCharts(chartViewport, options);
   pivotChart.render();
 }
+
+// Regression Forecasting Math
+function calculateForecast(xData, yData, forecastPeriods = 6) {
+  const N = xData.length;
+  if (N < 3) return null;
+  
+  const xIndices = Array.from({ length: N }, (_, i) => i);
+  
+  const meanX = xIndices.reduce((a, b) => a + b, 0) / N;
+  const meanY = yData.reduce((a, b) => a + b, 0) / N;
+  
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < N; i++) {
+    num += (xIndices[i] - meanX) * (yData[i] - meanY);
+    den += Math.pow(xIndices[i] - meanX, 2);
+  }
+  
+  const slope = den === 0 ? 0 : num / den;
+  const intercept = meanY - slope * meanX;
+  
+  let sumSqRes = 0;
+  for (let i = 0; i < N; i++) {
+    const pred = slope * xIndices[i] + intercept;
+    sumSqRes += Math.pow(yData[i] - pred, 2);
+  }
+  
+  const stdErrorEst = Math.sqrt(sumSqRes / (N - 2)) || 0;
+  const sumSqXDiff = xIndices.reduce((sum, x) => sum + Math.pow(x - meanX, 2), 0) || 1;
+  
+  const futureY = [];
+  const futureUpper = [];
+  const futureLower = [];
+  
+  for (let k = 0; k < forecastPeriods; k++) {
+    const xNew = N + k;
+    const pred = slope * xNew + intercept;
+    
+    // Calculate standard error for confidence interval (t-critical ~ 1.96 for 95% CI)
+    const sePred = stdErrorEst * Math.sqrt(1 + 1/N + Math.pow(xNew - meanX, 2) / sumSqXDiff);
+    const tVal = 1.96;
+    
+    futureY.push(pred);
+    futureUpper.push(pred + tVal * sePred);
+    futureLower.push(Math.max(0, pred - tVal * sePred));
+  }
+  
+  return {
+    futureY,
+    futureUpper,
+    futureLower
+  };
+}
+
+function projectFutureDates(datesList, periodsCount, isDateSeries) {
+  if (!isDateSeries || datesList.length < 2) {
+    return Array.from({ length: periodsCount }, (_, i) => `Forecast ${i + 1}`);
+  }
+  
+  const timestamps = datesList.map(d => Date.parse(d)).filter(t => !isNaN(t));
+  if (timestamps.length < 2) {
+    return Array.from({ length: periodsCount }, (_, i) => `Forecast ${i + 1}`);
+  }
+  
+  let diffSum = 0;
+  for (let i = 1; i < timestamps.length; i++) {
+    diffSum += timestamps[i] - timestamps[i - 1];
+  }
+  const avgInterval = diffSum / (timestamps.length - 1);
+  
+  const lastTimestamp = timestamps[timestamps.length - 1];
+  const futureDates = [];
+  
+  for (let i = 1; i <= periodsCount; i++) {
+    const nextTimestamp = lastTimestamp + avgInterval * i;
+    const nextDate = new Date(nextTimestamp);
+    
+    const yyyy = nextDate.getFullYear();
+    const mm = String(nextDate.getMonth() + 1).padStart(2, '0');
+    const dd = String(nextDate.getDate()).padStart(2, '0');
+    futureDates.push(`${yyyy}-${mm}-${dd}`);
+  }
+  
+  return futureDates;
+}
+
+// SQL Query Parameter Parsing & Chips Handlers
+function parseSqlParameters(sqlText) {
+  const paramRegex = /\{\{([^}]+)\}\}/g;
+  const matches = [];
+  let match;
+  while ((match = paramRegex.exec(sqlText)) !== null) {
+    const name = match[1].trim();
+    if (!matches.includes(name)) {
+      matches.push(name);
+    }
+  }
+  
+  const container = document.getElementById("sql-params-container");
+  const chipsContainer = document.getElementById("sql-params-chips");
+  const inputsContainer = document.getElementById("sql-params-inputs");
+  
+  if (!container || !chipsContainer || !inputsContainer) return;
+  
+  if (matches.length === 0) {
+    container.style.display = "none";
+    activeSqlParams = [];
+    return;
+  }
+  
+  container.style.display = "flex";
+  
+  // Retain existing values from previous inputs
+  const existingValues = {};
+  activeSqlParams.forEach(name => {
+    const input = document.getElementById(`param-input-${name}`);
+    if (input) {
+      existingValues[name] = input.value;
+    }
+  });
+  
+  activeSqlParams = matches;
+  
+  // Generate chips and input fields
+  chipsContainer.innerHTML = "";
+  inputsContainer.innerHTML = "";
+  
+  matches.forEach(name => {
+    const savedVal = existingValues[name] || "";
+    const isBound = savedVal.trim() !== "";
+    const chipClass = isBound ? "param-chip bound" : "param-chip unbound";
+    const dotIcon = isBound ? '<i class="fa-solid fa-circle-check"></i>' : '<i class="fa-solid fa-circle-minus"></i>';
+    
+    // Append Chip
+    chipsContainer.innerHTML += `
+      <div class="${chipClass}" id="param-chip-${name}">
+        ${dotIcon}
+        <span>${name}</span>
+      </div>
+    `;
+    
+    // Append Input Field
+    inputsContainer.innerHTML += `
+      <div class="select-group">
+        <label style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">{{${name}}}</label>
+        <input type="text" id="param-input-${name}" class="custom-select" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; margin-top: 4px; font-size: 12px; height: 32px;" value="${savedVal.replace(/"/g, '&quot;')}" placeholder="Enter value..." oninput="handleParamInput('${name}')">
+      </div>
+    `;
+  });
+}
+
+function handleParamInput(name) {
+  const input = document.getElementById(`param-input-${name}`);
+  const chip = document.getElementById(`param-chip-${name}`);
+  if (input && chip) {
+    const value = input.value.trim();
+    if (value !== "") {
+      chip.className = "param-chip bound";
+      chip.innerHTML = `<i class="fa-solid fa-circle-check"></i><span>${name}</span>`;
+    } else {
+      chip.className = "param-chip unbound";
+      chip.innerHTML = `<i class="fa-solid fa-circle-minus"></i><span>${name}</span>`;
+    }
+  }
+}
+
+
 
 
 

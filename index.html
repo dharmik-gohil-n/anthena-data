@@ -387,6 +387,15 @@
                 </div>
               </div>
               
+              <!-- Dynamic SQL Query Parameters Container -->
+              <div class="glass-card" id="sql-params-container" style="display: none; margin-top: 14px; padding: 14px; flex-direction: column; gap: 10px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                  <span style="font-size: 13px; font-weight: 700; color: var(--text-main);"><i class="fa-solid fa-sliders" style="color: var(--accent-color); margin-right: 6px;"></i> Active Query Parameters</span>
+                  <div id="sql-params-chips" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
+                </div>
+                <div id="sql-params-inputs" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-top: 6px;"></div>
+              </div>
+              
               <div class="glass-card sql-result-card">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                   <h3 style="font-size: 15px;">Query Console Results</h3>
@@ -584,6 +593,11 @@
             <option value="AVG">AVERAGE</option>
             <option value="COUNT">COUNT</option>
           </select>
+        </div>
+        
+        <div class="select-group" id="widget-forecast-container" style="display: none; flex-direction: row; align-items: center; gap: 10px; margin-top: 4px; padding: 6px 0;">
+          <input type="checkbox" id="widget-forecast-enable" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-color);">
+          <label for="widget-forecast-enable" style="cursor: pointer; margin-bottom: 0; font-size: 13px; font-weight: 600; color: var(--text-main);">Enable Predictive Forecast Trendline</label>
         </div>
       </div>
       <div class="modal-footer">
