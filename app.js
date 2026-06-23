@@ -36,6 +36,7 @@ let sqlSavedQueries = [];
 let colOutlierStats = {};
 let activeSqlParams = [];
 let activeFilters = [];
+let loadedDatasets = {};
 
 // Dashboard widget configurations
 let dashboardCharts = [];
@@ -64,7 +65,16 @@ window.addEventListener("DOMContentLoaded", () => {
       e.preventDefault();
       dropZone.style.borderColor = "rgba(255, 255, 255, 0.15)";
       if (e.dataTransfer.files.length > 0) {
-        processUploadedFile(e.dataTransfer.files[0]);
+        let fileIndex = 0;
+        function processNextDrop() {
+          if (fileIndex < e.dataTransfer.files.length) {
+            processUploadedFile(e.dataTransfer.files[fileIndex], () => {
+              fileIndex++;
+              processNextDrop();
+            });
+          }
+        }
+        processNextDrop();
       }
     });
   }
@@ -105,6 +115,9 @@ window.addEventListener("DOMContentLoaded", () => {
   } catch (e) {
     console.error("Failed to load history or saved queries:", e);
   }
+
+  // Initialize Autocomplete suggestions box
+  initSqlAutocomplete();
 });
 
 // Switch Tabs Panel
@@ -180,18 +193,35 @@ function triggerFileUpload() {
 
 // File Input trigger
 function handleFileSelect(event) {
-  const file = event.target.files[0];
-  if (file) {
-    processUploadedFile(file);
+  const files = event.target.files;
+  if (files && files.length > 0) {
+    let fileIndex = 0;
+    function processNext() {
+      if (fileIndex < files.length) {
+        processUploadedFile(files[fileIndex], () => {
+          fileIndex++;
+          processNext();
+        });
+      }
+    }
+    processNext();
   }
 }
 
+function cleanTableName(filename) {
+  const baseName = filename.split('.').slice(0, -1).join('.');
+  let cleanName = baseName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+  if (/^[0-9]/.test(cleanName)) {
+    cleanName = '_' + cleanName;
+  }
+  return cleanName || 'table_' + Math.floor(Math.random() * 1000);
+}
+
 // Parse File via FileReader (supports CSV and Excel XLSX)
-function processUploadedFile(file) {
+function processUploadedFile(file, callback) {
   const reader = new FileReader();
   const fileExt = file.name.split('.').pop().toLowerCase();
-  datasetName = file.name;
-  datasetType = "custom";
+  const cleanName = cleanTableName(file.name);
 
   reader.onload = function(e) {
     let data = e.target.result;
@@ -212,6 +242,7 @@ function processUploadedFile(file) {
 
       if (parsedRows.length === 0) {
         alert("The parsed dataset is empty. Please check your file.");
+        if (callback) callback();
         return;
       }
 
@@ -230,15 +261,30 @@ function processUploadedFile(file) {
         }
       });
 
-      currentDataset = parsedRows;
-      activeData = JSON.parse(JSON.stringify(parsedRows)); // deep clone
+      const isFirst = Object.keys(loadedDatasets).length === 0;
+
+      if (isFirst) {
+        datasetName = file.name;
+        datasetType = "custom";
+        currentDataset = parsedRows;
+        activeData = JSON.parse(JSON.stringify(parsedRows)); // deep clone
+        loadedDatasets = { data: currentDataset };
+        
+        initLoadedDataset();
+        switchTab('datahub');
+      } else {
+        loadedDatasets[cleanName] = parsedRows;
+        alert(`Successfully loaded additional table: "${cleanName}" (${parsedRows.length} rows)`);
+        
+        registerTablesInAlaSql();
+        initSqlConsole();
+      }
       
-      initLoadedDataset();
-      switchTab('datahub');
-      
+      if (callback) callback();
     } catch (err) {
       console.error(err);
       alert("Error parsing document. Verify layout matches CSV/XLSX standards.");
+      if (callback) callback();
     }
   };
 
@@ -310,8 +356,12 @@ function loadSample(sampleId) {
                   "Warehouse Tech Inventory";
     datasetType = sampleId;
     
-    // Clear dashboards
+    // Clear dashboards and slicers
     dashboardCharts = [];
+    dashboardSlicers = {};
+    
+    loadedDatasets = { data: currentDataset };
+    registerTablesInAlaSql();
     
     initLoadedDataset();
     
@@ -330,10 +380,15 @@ function loadSample(sampleId) {
 function initLoadedDataset() {
   tablePage = 0;
   activeFilters = [];
+  dashboardSlicers = {};
   const chipsContainer = document.getElementById("filter-chips-container");
   if (chipsContainer) {
     renderFilterChips();
   }
+  
+  // Register tables in AlaSQL context
+  registerTablesInAlaSql();
+  
   profileSchema();
   updateSidebarBadge();
   initSelectDropdowns();
@@ -377,21 +432,21 @@ function generateDefaultWidgets() {
   dashboardCharts = [];
   if (datasetType === 'spotify') {
     dashboardCharts.push(
-      { id: "w-1", title: "Streams by Genre (Total)", type: "donut", xaxis: "Genre", yaxis: "Streams", agg: "SUM" },
-      { id: "w-2", title: "Danceability vs Energy Ratings", type: "scatter", xaxis: "Danceability", yaxis: "Energy", agg: "NONE" },
-      { id: "w-3", title: "Monthly Stream Releases", type: "bar", xaxis: "ReleaseDate", yaxis: "Streams", agg: "SUM" }
+      { id: "w-1", title: "Streams by Genre (Total)", type: "donut", xaxis: "Genre", yaxis: ["Streams"], agg: "SUM" },
+      { id: "w-2", title: "Danceability vs Energy Ratings", type: "scatter", xaxis: "Danceability", yaxis: ["Energy"], agg: "NONE" },
+      { id: "w-3", title: "Monthly Stream Releases", type: "bar", xaxis: "ReleaseDate", yaxis: ["Streams"], agg: "SUM" }
     );
   } else if (datasetType === 'ecommerce') {
     dashboardCharts.push(
-      { id: "w-1", title: "Revenue contribution by Category", type: "donut", xaxis: "Category", yaxis: "Revenue", agg: "SUM" },
-      { id: "w-2", title: "Daily Sales Revenue Trend", type: "line", xaxis: "Date", yaxis: "Revenue", agg: "SUM" },
-      { id: "w-3", title: "Product Profit Margin Analysis", type: "bar", xaxis: "SubCategory", yaxis: "Profit", agg: "SUM" }
+      { id: "w-1", title: "Revenue contribution by Category", type: "donut", xaxis: "Category", yaxis: ["Revenue"], agg: "SUM" },
+      { id: "w-2", title: "Daily Sales Revenue Trend", type: "line", xaxis: "Date", yaxis: ["Revenue"], agg: "SUM" },
+      { id: "w-3", title: "Product Profit Margin Analysis", type: "bar", xaxis: "SubCategory", yaxis: ["Profit"], agg: "SUM" }
     );
   } else if (datasetType === 'inventory') {
     dashboardCharts.push(
-      { id: "w-1", title: "Stock Distribution by Category", type: "bar", xaxis: "Category", yaxis: "StockLevel", agg: "SUM" },
-      { id: "w-2", title: "Retail Pricing vs Stock Unit Cost", type: "scatter", xaxis: "UnitCost", yaxis: "RetailPrice", agg: "NONE" },
-      { id: "w-3", title: "Warehouse Storage Holdings", type: "donut", xaxis: "Warehouse", yaxis: "StockLevel", agg: "SUM" }
+      { id: "w-1", title: "Stock Distribution by Category", type: "bar", xaxis: "Category", yaxis: ["StockLevel"], agg: "SUM" },
+      { id: "w-2", title: "Retail Pricing vs Stock Unit Cost", type: "scatter", xaxis: "UnitCost", yaxis: ["RetailPrice"], agg: "NONE" },
+      { id: "w-3", title: "Warehouse Storage Holdings", type: "donut", xaxis: "Warehouse", yaxis: ["StockLevel"], agg: "SUM" }
     );
   } else {
     // Custom upload default widgets: pick first text and first numeric column
@@ -401,7 +456,7 @@ function generateDefaultWidgets() {
         title: `Total ${dataProfile.numericCols[0]} by ${dataProfile.textCols[0]}`,
         type: "bar",
         xaxis: dataProfile.textCols[0],
-        yaxis: dataProfile.numericCols[0],
+        yaxis: [dataProfile.numericCols[0]],
         agg: "SUM"
       });
     }
@@ -483,6 +538,8 @@ function profileSchema() {
   // Render profile list to UI
   renderProfileUi();
   renderOutliersUi();
+  renderCorrelationHeatmap();
+  populateFormulaHelpers();
 }
 
 // Render profile UI
@@ -511,10 +568,18 @@ function renderProfileUi() {
                     "var(--accent-color)";
     
     html += `
-      <div style="background-color: rgba(255,255,255,0.01); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; font-size: 12px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-          <span style="font-weight: 600; color: var(--text-main);"><i class="fa-solid ${iconClass}" style="color: ${iconColor}; margin-right: 6px;"></i>${col.name}</span>
-          <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); background-color: rgba(255,255,255,0.04); padding: 2px 6px; border-radius: 4px;">${col.type}</span>
+      <div style="background-color: rgba(255,255,255,0.01); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; font-size: 12px; display: flex; flex-direction: column; gap: 6px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-weight: 600; color: var(--text-main); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 130px;" title="${col.name}"><i class="fa-solid ${iconClass}" style="color: ${iconColor}; margin-right: 6px;"></i>${col.name}</span>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <select onchange="updateColumnType('${col.name}', this.value)" style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 4px; padding: 2px 4px; font-size: 9px; cursor: pointer; outline: none; font-weight: 600;">
+              <option value="Text" ${col.type === 'Text' ? 'selected' : ''}>Text</option>
+              <option value="Number" ${col.type === 'Number' ? 'selected' : ''}>Number</option>
+              <option value="Date" ${col.type === 'Date' ? 'selected' : ''}>Date</option>
+            </select>
+            <i class="fa-solid fa-pen-to-square schema-action-btn" onclick="renameColumn('${col.name}')" title="Rename Column" style="font-size: 11px;"></i>
+            <i class="fa-solid fa-trash-can schema-action-btn schema-action-btn-danger" onclick="dropColumn('${col.name}')" title="Drop Column" style="font-size: 11px; color: var(--danger);"></i>
+          </div>
         </div>
         <div style="display: flex; justify-content: space-between; color: var(--text-muted); font-size: 11px;">
           <span>Unique: ${col.unique}</span>
@@ -527,9 +592,82 @@ function renderProfileUi() {
   container.innerHTML = html;
 }
 
+// Column Schema Mutation Operations (Option 1)
+function updateColumnType(colName, newType) {
+  currentDataset.forEach(row => {
+    if (row.hasOwnProperty(colName)) {
+      if (newType === 'Number') {
+        const val = Number(String(row[colName]).replace(/,/g, '').trim());
+        row[colName] = isNaN(val) ? 0 : val;
+      } else if (newType === 'Text') {
+        row[colName] = String(row[colName]);
+      } else if (newType === 'Date') {
+        const val = Date.parse(row[colName]);
+        if (!isNaN(val)) {
+          row[colName] = new Date(val).toISOString().split('T')[0];
+        }
+      }
+    }
+  });
+  
+  activeData = JSON.parse(JSON.stringify(currentDataset));
+  if (loadedDatasets.hasOwnProperty("data")) {
+    loadedDatasets.data = currentDataset;
+  }
+  applyActiveFilters();
+  profileSchema();
+  renderDataTable();
+  initSelectDropdowns();
+  initSqlConsole();
+}
+
+function renameColumn(colName) {
+  const newName = prompt(`Enter new column name for "${colName}":`, colName);
+  if (!newName || newName.trim() === "" || newName === colName) return;
+  const cleanName = newName.trim();
+  
+  currentDataset.forEach(row => {
+    if (row.hasOwnProperty(colName)) {
+      row[cleanName] = row[colName];
+      delete row[colName];
+    }
+  });
+  
+  activeData = JSON.parse(JSON.stringify(currentDataset));
+  if (loadedDatasets.hasOwnProperty("data")) {
+    loadedDatasets.data = currentDataset;
+  }
+  applyActiveFilters();
+  profileSchema();
+  renderDataTable();
+  initSelectDropdowns();
+  initSqlConsole();
+}
+
+function dropColumn(colName) {
+  if (!confirm(`Are you sure you want to drop column "${colName}"?`)) return;
+  
+  currentDataset.forEach(row => {
+    if (row.hasOwnProperty(colName)) {
+      delete row[colName];
+    }
+  });
+  
+  activeData = JSON.parse(JSON.stringify(currentDataset));
+  if (loadedDatasets.hasOwnProperty("data")) {
+    loadedDatasets.data = currentDataset;
+  }
+  applyActiveFilters();
+  profileSchema();
+  renderDataTable();
+  initSelectDropdowns();
+  initSqlConsole();
+}
+
 // Load Dropdown Options
 function initSelectDropdowns() {
   const rowSelect = document.getElementById("pivot-row-select");
+  const rowNestedSelect = document.getElementById("pivot-row-nested-select");
   const colSelect = document.getElementById("pivot-col-select");
   const valSelect = document.getElementById("pivot-val-select");
   
@@ -537,11 +675,13 @@ function initSelectDropdowns() {
   
   // Setup selectors
   rowSelect.innerHTML = `<option value="None">None</option>`;
+  if (rowNestedSelect) rowNestedSelect.innerHTML = `<option value="None">None</option>`;
   colSelect.innerHTML = `<option value="None">None</option>`;
   valSelect.innerHTML = `<option value="None">None</option>`;
   
   dataProfile.columns.forEach(col => {
     rowSelect.innerHTML += `<option value="${col.name}">${col.name}</option>`;
+    if (rowNestedSelect) rowNestedSelect.innerHTML += `<option value="${col.name}">${col.name}</option>`;
     colSelect.innerHTML += `<option value="${col.name}">${col.name}</option>`;
     if (col.type === "Number") {
       valSelect.innerHTML += `<option value="${col.name}">${col.name}</option>`;
@@ -550,6 +690,7 @@ function initSelectDropdowns() {
 
   // Select defaults if possible
   if (dataProfile.textCols.length > 0) rowSelect.value = dataProfile.textCols[0];
+  if (rowNestedSelect) rowNestedSelect.value = "None";
   if (dataProfile.textCols.length > 1) colSelect.value = dataProfile.textCols[1];
   if (dataProfile.numericCols.length > 0) valSelect.value = dataProfile.numericCols[0];
 
@@ -575,6 +716,15 @@ function initSelectDropdowns() {
     });
     // Set initial dropdown value selectors
     handleFilterColChange();
+  }
+
+  // Populate cleaner columns dropdown
+  const cleanerColSelect = document.getElementById("cleaner-col-select");
+  if (cleanerColSelect) {
+    cleanerColSelect.innerHTML = "";
+    dataProfile.numericCols.forEach(col => {
+      cleanerColSelect.innerHTML += `<option value="${col}">${col}</option>`;
+    });
   }
 }
 
@@ -703,48 +853,220 @@ function cleanData(operation) {
     applyActiveFilters();
     alert(`Cleaned: Deduplicated dataset. Removed ${removedCount} duplicates.`);
   }
+
+  else if (operation === 'zscore') {
+    const colName = document.getElementById("cleaner-col-select").value;
+    if (!colName) {
+      alert("Please select a numeric column to standardize.");
+      return;
+    }
+    const vals = currentDataset.map(r => Number(r[colName])).filter(v => !isNaN(v));
+    if (vals.length === 0) return;
+    
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const sqDiffs = vals.map(v => Math.pow(v - mean, 2));
+    const stdDev = Math.sqrt(sqDiffs.reduce((a, b) => a + b, 0) / vals.length) || 1;
+    
+    currentDataset.forEach(row => {
+      const val = Number(row[colName]);
+      if (!isNaN(val)) {
+        row[colName] = Number(((val - mean) / stdDev).toFixed(4));
+      }
+    });
+    
+    applyActiveFilters();
+    alert(`Cleaned: Applied Z-score standardization on "${colName}". Mean is now 0, Std Dev is 1.`);
+  }
+  
+  else if (operation === 'minmax') {
+    const colName = document.getElementById("cleaner-col-select").value;
+    if (!colName) {
+      alert("Please select a numeric column to scale.");
+      return;
+    }
+    const vals = currentDataset.map(r => Number(r[colName])).filter(v => !isNaN(v));
+    if (vals.length === 0) return;
+    
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const range = max - min || 1;
+    
+    currentDataset.forEach(row => {
+      const val = Number(row[colName]);
+      if (!isNaN(val)) {
+        row[colName] = Number(((val - min) / range).toFixed(4));
+      }
+    });
+    
+    applyActiveFilters();
+    alert(`Cleaned: Applied Min-Max scaling on "${colName}". Range is now [0, 1].`);
+  }
+  
+  else if (operation === 'impute_median') {
+    const colName = document.getElementById("cleaner-col-select").value;
+    if (!colName) {
+      alert("Please select a numeric column to impute.");
+      return;
+    }
+    
+    const vals = currentDataset.map(r => Number(r[colName])).filter(v => !isNaN(v)).sort((a,b)=>a-b);
+    if (vals.length === 0) return;
+    
+    let median = 0;
+    const midIdx = Math.floor(vals.length / 2);
+    if (vals.length % 2 === 0) {
+      median = (vals[midIdx - 1] + vals[midIdx]) / 2;
+    } else {
+      median = vals[midIdx];
+    }
+    
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const sqDiffs = vals.map(v => Math.pow(v - mean, 2));
+    const stdDev = Math.sqrt(sqDiffs.reduce((a, b) => a + b, 0) / vals.length) || 1;
+    
+    let imputedCount = 0;
+    currentDataset.forEach(row => {
+      const val = Number(row[colName]);
+      if (!isNaN(val) && Math.abs((val - mean) / stdDev) > 2) {
+        row[colName] = median;
+        imputedCount++;
+      }
+    });
+    
+    applyActiveFilters();
+    alert(`Cleaned: Replaced ${imputedCount} outliers in "${colName}" with the column median (${median.toLocaleString()}).`);
+  }
 }
 
 // SQL Lab Panel Operations
+// SQL Lab Panel Operations
 function initSqlConsole() {
   const explorerList = document.getElementById("sql-schema-list");
-  if (!explorerList || activeData.length === 0) return;
+  if (!explorerList) return;
   
-  const headers = Object.keys(activeData[0]);
-  let explorerHtml = `
-    <div class="schema-table-node">
-      <span class="schema-table-name"><i class="fa-solid fa-table"></i> data</span>
-      <ul class="schema-columns">
-  `;
+  explorerList.innerHTML = "";
+  let explorerHtml = "";
   
-  headers.forEach(h => {
-    let colObj = dataProfile.columns.find(c => c.name === h);
-    let typeCode = colObj ? colObj.type : "Text";
+  for (let tableName in loadedDatasets) {
+    const dataset = loadedDatasets[tableName];
+    if (!dataset || dataset.length === 0) continue;
+    const headers = Object.keys(dataset[0]);
+    
     explorerHtml += `
-      <li class="schema-col-item">
-        <span>${h}</span>
-        <span class="schema-col-type">${typeCode.toLowerCase()}</span>
-      </li>
+      <div class="schema-table-node" style="margin-bottom: 12px;">
+        <span class="schema-table-name" style="font-weight: 600; color: var(--text-main); font-size: 13px; display: flex; align-items: center; gap: 6px;"><i class="fa-solid fa-table" style="color: var(--accent-color);"></i> ${tableName}</span>
+        <ul class="schema-columns" style="margin-top: 4px; padding-left: 18px; list-style: none;">
     `;
-  });
-  
-  explorerHtml += `
-      </ul>
-    </div>
-  `;
+    
+    headers.forEach(h => {
+      let colType = "text";
+      const sampleVal = dataset[0][h];
+      if (typeof sampleVal === 'number') colType = "number";
+      else if (!isNaN(Date.parse(sampleVal))) colType = "date";
+      
+      explorerHtml += `
+        <li class="schema-col-item" style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 2px;">
+          <span>${h}</span>
+          <span class="schema-col-type" style="font-family: var(--font-mono); font-size: 9px; opacity: 0.7;">${colType}</span>
+        </li>
+      `;
+    });
+    
+    explorerHtml += `
+        </ul>
+      </div>
+    `;
+  }
   
   explorerList.innerHTML = explorerHtml;
 
-  // Populate Visual Query Builder select options
+  // Populate Visual Query Builder select options based on primary 'data' dataset
+  const primaryData = loadedDatasets["data"] || activeData;
   const filterCol = document.getElementById("qb-filter-col");
   const sortCol = document.getElementById("qb-sort-col");
-  if (filterCol && sortCol) {
+  if (filterCol && sortCol && primaryData && primaryData.length > 0) {
+    const headers = Object.keys(primaryData[0]);
     filterCol.innerHTML = `<option value="None">None</option>`;
     sortCol.innerHTML = `<option value="None">None</option>`;
     headers.forEach(h => {
       filterCol.innerHTML += `<option value="${h}">${h}</option>`;
       sortCol.innerHTML += `<option value="${h}">${h}</option>`;
     });
+  }
+
+  // Populate Join Builder tables & keys (Option 2)
+  populateJoinTables();
+}
+
+// SQL Visual Join Builder Handlers (Option 2)
+function populateJoinTables() {
+  const leftTable = document.getElementById("qb-join-left-table");
+  const rightTable = document.getElementById("qb-join-right-table");
+  if (!leftTable || !rightTable) return;
+  
+  const tables = Object.keys(loadedDatasets);
+  leftTable.innerHTML = "";
+  rightTable.innerHTML = "";
+  
+  tables.forEach(t => {
+    leftTable.innerHTML += `<option value="${t}">${t}</option>`;
+    rightTable.innerHTML += `<option value="${t}">${t}</option>`;
+  });
+  
+  if (tables.length > 0) {
+    leftTable.value = tables[0];
+    if (tables[1]) {
+      rightTable.value = tables[1];
+    } else {
+      rightTable.value = tables[0];
+    }
+  }
+  handleJoinLeftTableChange();
+  handleJoinRightTableChange();
+}
+
+function handleJoinLeftTableChange() {
+  const leftTable = document.getElementById("qb-join-left-table").value;
+  const leftKey = document.getElementById("qb-join-left-key");
+  if (!leftKey || !loadedDatasets[leftTable]) return;
+  
+  leftKey.innerHTML = "";
+  const cols = Object.keys(loadedDatasets[leftTable][0] || {});
+  cols.forEach(c => {
+    leftKey.innerHTML += `<option value="${c}">${c}</option>`;
+  });
+}
+
+function handleJoinRightTableChange() {
+  const rightTable = document.getElementById("qb-join-right-table").value;
+  const rightKey = document.getElementById("qb-join-right-key");
+  if (!rightKey || !loadedDatasets[rightTable]) return;
+  
+  rightKey.innerHTML = "";
+  const cols = Object.keys(loadedDatasets[rightTable][0] || {});
+  cols.forEach(c => {
+    rightKey.innerHTML += `<option value="${c}">${c}</option>`;
+  });
+}
+
+function compileJoinQuery() {
+  const leftTable = document.getElementById("qb-join-left-table").value;
+  const leftKey = document.getElementById("qb-join-left-key").value;
+  const joinType = document.getElementById("qb-join-type").value;
+  const rightTable = document.getElementById("qb-join-right-table").value;
+  const rightKey = document.getElementById("qb-join-right-key").value;
+  
+  if (!leftTable || !rightTable) {
+    alert("Make sure you have at least two tables loaded to join.");
+    return;
+  }
+  
+  let sql = `SELECT * \nFROM ${leftTable} \n${joinType} ${rightTable} \n  ON ${leftTable}.[${leftKey}] = ${rightTable}.[${rightKey}] \nLIMIT 15;`;
+  
+  const textarea = document.getElementById("sql-editor-textarea");
+  if (textarea) {
+    textarea.value = sql;
+    textarea.focus();
   }
 }
 
@@ -801,14 +1123,12 @@ function executeSqlQuery() {
     return;
   }
   
-  // AlaSQL executes queries against Javascript memory structures.
-  // We represent activeData array as the variable parameter "?" mapped in AlaSQL context.
-  // To simulate query targets, we substitute the table word "data" with "?"
-  preparedQuery = preparedQuery.replace(/\bdata\b/gi, "?");
+  // Update register tables state before querying to ensure they have the latest activeData
+  registerTablesInAlaSql();
   
   try {
     const startTime = performance.now();
-    const result = alasql(preparedQuery, [activeData]);
+    const result = alasql(preparedQuery);
     const duration = ((performance.now() - startTime) / 1000).toFixed(3);
     
     if (!Array.isArray(result) || result.length === 0) {
@@ -991,40 +1311,20 @@ function initPivotOptions() {
 
 function generatePivotTable() {
   const rowField = document.getElementById("pivot-row-select").value;
+  const rowNestedField = document.getElementById("pivot-row-nested-select").value;
   const colField = document.getElementById("pivot-col-select").value;
   const valField = document.getElementById("pivot-val-select").value;
   const aggFunc = document.getElementById("pivot-agg-select").value;
+  const enableHeatmap = document.getElementById("pivot-enable-heatmap").checked;
   
   const matrixTable = document.getElementById("pivot-matrix-table");
   
   if (activeData.length === 0) return;
   
-  // Pivot calculations:
-  // Let's create unique list of Rows and Columns
   const uniqueRows = [...new Set(activeData.map(r => r[rowField]))].filter(v => v !== null && v !== undefined && v !== "");
   const uniqueCols = colField !== "None" ? [...new Set(activeData.map(r => r[colField]))].filter(v => v !== null && v !== undefined && v !== "") : ["Value"];
   
-  // Build Matrix
-  const pivotMap = {};
-  uniqueRows.forEach(r => {
-    pivotMap[r] = {};
-    uniqueCols.forEach(c => {
-      pivotMap[r][c] = [];
-    });
-  });
-  
-  // Group elements
-  activeData.forEach(row => {
-    const rVal = row[rowField];
-    const cVal = colField !== "None" ? row[colField] : "Value";
-    const metric = valField !== "None" ? Number(row[valField]) : 1; // count fallback
-    
-    if (pivotMap[rVal] && pivotMap[rVal][cVal] !== undefined) {
-      pivotMap[rVal][cVal].push(metric);
-    }
-  });
-  
-  // Compile aggregator
+  // Aggregate helper
   const aggregate = (arr) => {
     if (!arr || arr.length === 0) return 0;
     switch (aggFunc) {
@@ -1037,37 +1337,157 @@ function generatePivotTable() {
     }
   };
   
-  // Build headers HTML
-  let headHtml = `<tr><th class="pivot-header">${rowField}</th>`;
+  // 1. Build pivot map hierarchy
+  const pivotMap = {};
+  
+  if (rowNestedField !== "None") {
+    // Unique list of parent-child groups that actually exist
+    activeData.forEach(row => {
+      const p = row[rowField];
+      const c = row[rowNestedField];
+      if (p !== null && p !== undefined && p !== "" && c !== null && c !== undefined && c !== "") {
+        if (!pivotMap[p]) {
+          pivotMap[p] = { children: {} };
+        }
+        if (!pivotMap[p].children[c]) {
+          pivotMap[p].children[c] = {};
+          uniqueCols.forEach(col => {
+            pivotMap[p].children[c][col] = [];
+          });
+        }
+        
+        const metric = valField !== "None" ? Number(row[valField]) : 1;
+        const colVal = colField !== "None" ? row[colField] : "Value";
+        if (pivotMap[p].children[c][colVal] !== undefined) {
+          pivotMap[p].children[c][colVal].push(metric);
+        }
+      }
+    });
+  } else {
+    // Flat rows
+    uniqueRows.forEach(r => {
+      pivotMap[r] = {};
+      uniqueCols.forEach(c => {
+        pivotMap[r][c] = [];
+      });
+    });
+    
+    activeData.forEach(row => {
+      const rVal = row[rowField];
+      const cVal = colField !== "None" ? row[colField] : "Value";
+      const metric = valField !== "None" ? Number(row[valField]) : 1;
+      
+      if (pivotMap[rVal] && pivotMap[rVal][cVal] !== undefined) {
+        pivotMap[rVal][cVal].push(metric);
+      }
+    });
+  }
+  
+  // 2. Build headers HTML
+  let headHtml = `<tr><th class="pivot-header">${rowField} ${rowNestedField !== "None" ? " / " + rowNestedField : ""}</th>`;
   uniqueCols.forEach(c => {
     headHtml += `<th style="text-align: right;">${c}</th>`;
   });
   headHtml += `<th style="text-align: right; font-weight: 700;">Grand Total</th></tr>`;
   matrixTable.querySelector("thead").innerHTML = headHtml;
   
-  // Accumulate rows and totals
+  // Calculate value ranges for Heatmap scaling
+  let allAggregatedValues = [];
+  if (rowNestedField !== "None") {
+    for (let p in pivotMap) {
+      for (let c in pivotMap[p].children) {
+        uniqueCols.forEach(col => {
+          const list = pivotMap[p].children[c][col];
+          allAggregatedValues.push(list.length > 0 ? aggregate(list) : 0);
+        });
+      }
+    }
+  } else {
+    uniqueRows.forEach(r => {
+      uniqueCols.forEach(c => {
+        const list = pivotMap[r][c];
+        allAggregatedValues.push(list.length > 0 ? aggregate(list) : 0);
+      });
+    });
+  }
+  
+  const minVal = allAggregatedValues.length > 0 ? Math.min(...allAggregatedValues) : 0;
+  const maxVal = allAggregatedValues.length > 0 ? Math.max(...allAggregatedValues) : 0;
+  const valRange = maxVal - minVal || 1;
+  
+  const getCellBg = (val) => {
+    if (!enableHeatmap || allAggregatedValues.length === 0) return "";
+    const pct = (val - minVal) / valRange;
+    const primaryColor = themePalettes[currentTheme][0];
+    return `background-color: ${hexToRgba(primaryColor, pct * 0.35)};`;
+  };
+  
+  // 3. Populate matrix content
   let bodyHtml = "";
   const colTotals = {};
   uniqueCols.forEach(c => { colTotals[c] = []; });
-  let grandTotalList = [];
   
-  uniqueRows.forEach(r => {
-    bodyHtml += `<tr><td style="font-weight: 600;">${r}</td>`;
-    let rowValues = [];
-    
-    uniqueCols.forEach(c => {
-      const cellValList = pivotMap[r][c];
-      const aggregatedVal = cellValList.length > 0 ? aggregate(cellValList) : 0;
-      bodyHtml += `<td style="text-align: right;">${aggregatedVal.toLocaleString(undefined, {maximumFractionDigits: 2})}</td>`;
+  if (rowNestedField !== "None") {
+    // Nested rows render loop
+    for (let p in pivotMap) {
+      // Parent Row Total aggregation
+      const parentColTotals = {};
+      uniqueCols.forEach(col => { parentColTotals[col] = []; });
+      for (let c in pivotMap[p].children) {
+        uniqueCols.forEach(col => {
+          pivotMap[p].children[c][col].forEach(v => parentColTotals[col].push(v));
+        });
+      }
       
-      rowValues.push(aggregatedVal);
-      cellValList.forEach(v => colTotals[c].push(v));
+      const parentGrandVals = [];
+      uniqueCols.forEach(col => {
+        parentGrandVals.push(aggregate(parentColTotals[col]));
+      });
+      const parentGrandTotal = aggregate(parentGrandVals);
+      
+      bodyHtml += `<tr class="pivot-parent-row">`;
+      bodyHtml += `<td style="font-weight: 700;"><i class="fa-solid fa-folder-open" style="margin-right: 6px; color: var(--primary-color);"></i>${p}</td>`;
+      uniqueCols.forEach((col, idx) => {
+        bodyHtml += `<td style="text-align: right; font-weight: 700;">${parentGrandVals[idx].toLocaleString(undefined, {maximumFractionDigits: 2})}</td>`;
+      });
+      bodyHtml += `<td style="text-align: right; font-weight: 700;">${parentGrandTotal.toLocaleString(undefined, {maximumFractionDigits: 2})}</td>`;
+      bodyHtml += `</tr>`;
+      
+      // Children rows loop
+      for (let c in pivotMap[p].children) {
+        bodyHtml += `<tr><td class="pivot-indent"><i class="fa-solid fa-angle-right" style="margin-right: 6px; font-size:10px; opacity:0.5;"></i>${c}</td>`;
+        let rowValues = [];
+        uniqueCols.forEach(col => {
+          const list = pivotMap[p].children[c][col];
+          const val = list.length > 0 ? aggregate(list) : 0;
+          bodyHtml += `<td style="text-align: right; ${getCellBg(val)}">${val.toLocaleString(undefined, {maximumFractionDigits: 2})}</td>`;
+          rowValues.push(val);
+          list.forEach(v => colTotals[col].push(v));
+        });
+        
+        const rowTotal = aggregate(rowValues);
+        bodyHtml += `<td style="text-align: right; font-weight: 700; background-color: rgba(255,255,255,0.01);">${rowTotal.toLocaleString(undefined, {maximumFractionDigits: 2})}</td></tr>`;
+      }
+    }
+  } else {
+    // Flat rows render loop
+    uniqueRows.forEach(r => {
+      bodyHtml += `<tr><td style="font-weight: 600;">${r}</td>`;
+      let rowValues = [];
+      
+      uniqueCols.forEach(c => {
+        const cellValList = pivotMap[r][c];
+        const aggregatedVal = cellValList.length > 0 ? aggregate(cellValList) : 0;
+        bodyHtml += `<td style="text-align: right; ${getCellBg(aggregatedVal)}">${aggregatedVal.toLocaleString(undefined, {maximumFractionDigits: 2})}</td>`;
+        
+        rowValues.push(aggregatedVal);
+        cellValList.forEach(v => colTotals[c].push(v));
+      });
+      
+      const rowTotal = aggregate(rowValues);
+      bodyHtml += `<td style="text-align: right; font-weight: 700; background-color: rgba(255,255,255,0.02);">${rowTotal.toLocaleString(undefined, {maximumFractionDigits: 2})}</td></tr>`;
     });
-    
-    // Row Total
-    const rowTotal = aggregate(rowValues);
-    bodyHtml += `<td style="text-align: right; font-weight: 700; background-color: rgba(255,255,255,0.02);">${rowTotal.toLocaleString(undefined, {maximumFractionDigits: 2})}</td></tr>`;
-  });
+  }
   
   // Grand bottom total row
   bodyHtml += `<tr class="pivot-total"><td style="font-weight: 700;">Grand Total</td>`;
@@ -1091,8 +1511,24 @@ function generatePivotTable() {
     </button>
   `;
   
-  // Render inline pivot chart visualization
-  renderInlinePivotChart(uniqueRows, uniqueCols, pivotMap, aggregate, rowField, colField, valField);
+  // Render inline pivot chart visualization (Option 5 compatibility)
+  if (rowNestedField !== "None") {
+    const flatRows = [];
+    const flatPivotMap = {};
+    for (let p in pivotMap) {
+      for (let c in pivotMap[p].children) {
+        const flatKey = `${p} - ${c}`;
+        flatRows.push(flatKey);
+        flatPivotMap[flatKey] = {};
+        uniqueCols.forEach(col => {
+          flatPivotMap[flatKey][col] = pivotMap[p].children[c][col];
+        });
+      }
+    }
+    renderInlinePivotChart(flatRows, uniqueCols, flatPivotMap, aggregate, rowField, colField, valField);
+  } else {
+    renderInlinePivotChart(uniqueRows, uniqueCols, pivotMap, aggregate, rowField, colField, valField);
+  }
 }
 
 // Generate chart from compiled pivot
@@ -1111,6 +1547,9 @@ function renderDashboard() {
   const chartGrid = document.getElementById("dashboard-chart-grid");
   
   if (activeData.length === 0) return;
+  
+  // Render slicers panel
+  renderDashboardSlicers();
   
   // 1. Compile KPI Cards
   let firstNumCol = dataProfile.numericCols[0];
@@ -1170,12 +1609,17 @@ function renderDashboard() {
   chartGrid.innerHTML = "";
   
   dashboardCharts.forEach((widget, idx) => {
-    const colClass = widget.type === 'donut' ? 'col-span-2' : 'col-span-2';
+    const colSpanClass = widget.width || 'col-span-2';
+    const widgetStyle = widget.style || '';
     
     chartGrid.innerHTML += `
-      <div class="glass-card chart-card-wrapper ${colClass}">
-        <div class="chart-delete-btn" onclick="deleteWidget('${widget.id}')">&times;</div>
-        <h3 style="font-size: 14px; margin-bottom: 12px; font-weight:700;">${widget.title}</h3>
+      <div class="glass-card chart-card-wrapper ${colSpanClass}" style="${widgetStyle}" draggable="true" ondragstart="handleWidgetDragStart(event, '${widget.id}')" ondragover="handleWidgetDragOver(event)" ondrop="handleWidgetDrop(event, '${widget.id}')">
+        <div style="display: flex; gap: 6px; position: absolute; top: 16px; right: 16px; z-index: 5;">
+          <button class="btn btn-secondary btn-sm" onclick="resizeWidget('${widget.id}')" title="Cycle Card Width" style="padding: 2px 6px; font-size:10px; height: 22px; border-radius: 4px;"><i class="fa-solid fa-arrows-left-right"></i> Width</button>
+          <button class="btn btn-secondary btn-sm" onclick="styleWidgetModal('${widget.id}')" title="Custom Card Style" style="padding: 2px 6px; font-size:10px; height: 22px; border-radius: 4px;"><i class="fa-solid fa-paintbrush"></i> Style</button>
+          <div class="chart-delete-btn" onclick="deleteWidget('${widget.id}')" style="position:static; width:22px; height:22px; font-size:12px;">&times;</div>
+        </div>
+        <h3 style="font-size: 14px; margin-bottom: 12px; font-weight:700; max-width: 70%; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${widget.title}</h3>
         <div id="chart-widget-${widget.id}" style="width: 100%; min-height: 250px;"></div>
       </div>
     `;
@@ -1187,6 +1631,71 @@ function renderDashboard() {
       renderSingleWidget(widget);
     });
   });
+}
+
+// Drag & Drop event handlers (Option 3)
+function handleWidgetDragStart(e, widgetId) {
+  e.dataTransfer.setData("text/plain", widgetId);
+  e.currentTarget.classList.add("dragging");
+}
+
+function handleWidgetDragOver(e) {
+  e.preventDefault();
+}
+
+function handleWidgetDrop(e, targetId) {
+  e.preventDefault();
+  const draggedId = e.dataTransfer.getData("text/plain");
+  if (draggedId === targetId) return;
+  
+  const draggedIdx = dashboardCharts.findIndex(w => w.id === draggedId);
+  const targetIdx = dashboardCharts.findIndex(w => w.id === targetId);
+  if (draggedIdx > -1 && targetIdx > -1) {
+    const [draggedWidget] = dashboardCharts.splice(draggedIdx, 1);
+    dashboardCharts.splice(targetIdx, 0, draggedWidget);
+    renderDashboard();
+  }
+}
+
+// Widget customization handlers (Option 3)
+function resizeWidget(id) {
+  const widget = dashboardCharts.find(w => w.id === id);
+  if (widget) {
+    const widths = ['col-span-1', 'col-span-2', 'col-span-3', 'col-span-4'];
+    let currentWidth = widget.width || 'col-span-2';
+    let nextIdx = (widths.indexOf(currentWidth) + 1) % widths.length;
+    widget.width = widths[nextIdx];
+    renderDashboard();
+  }
+}
+
+function styleWidgetModal(widgetId) {
+  const widget = dashboardCharts.find(w => w.id === widgetId);
+  if (widget) {
+    document.getElementById("style-widget-id").value = widgetId;
+    document.getElementById("style-widget-bg").value = widget.styleBg || "";
+    document.getElementById("style-widget-glow").value = widget.styleGlow || "";
+    document.getElementById("widget-style-modal").classList.add("active");
+  }
+}
+
+function closeStyleWidgetModal() {
+  document.getElementById("widget-style-modal").classList.remove("active");
+}
+
+function saveWidgetStyle() {
+  const id = document.getElementById("style-widget-id").value;
+  const bg = document.getElementById("style-widget-bg").value;
+  const glow = document.getElementById("style-widget-glow").value;
+  
+  const widget = dashboardCharts.find(w => w.id === id);
+  if (widget) {
+    widget.styleBg = bg;
+    widget.styleGlow = glow;
+    widget.style = (bg ? bg + "; " : "") + (glow ? glow : "");
+    closeStyleWidgetModal();
+    renderDashboard();
+  }
 }
 
 // Delete custom widget
@@ -1201,19 +1710,39 @@ function renderSingleWidget(widget) {
   const div = document.getElementById(elementId);
   if (!div) return;
   
-  // Aggregate data if agg !== NONE
-  let chartData = [];
+  const yAxisList = Array.isArray(widget.yaxis) ? widget.yaxis : [widget.yaxis];
+  const primaryYaxis = yAxisList[0];
+  
+  let series = [];
+  let xCategories = [];
   
   if (widget.agg !== "NONE") {
-    // Perform AlaSQL group query
-    let orderBy = "Y DESC";
+    // Perform AlaSQL group query for multiple Y fields
+    const selectFields = yAxisList.map(col => `${widget.agg}([${col}]) AS [${col}]`).join(", ");
+    
+    let orderBy = `[${yAxisList[0]}] DESC`;
     if (dataProfile.dateCols.includes(widget.xaxis) || widget.xaxis.toLowerCase().includes("date")) {
       orderBy = `[${widget.xaxis}] ASC`;
     }
-    const sqlQuery = `SELECT [${widget.xaxis}] AS X, ${widget.agg}([${widget.yaxis}]) AS Y FROM ? GROUP BY [${widget.xaxis}] ORDER BY ${orderBy}`;
+    
+    const sqlQuery = `SELECT [${widget.xaxis}] AS X, ${selectFields} FROM ? GROUP BY [${widget.xaxis}] ORDER BY ${orderBy}`;
+    
     try {
       const aggResult = alasql(sqlQuery, [activeData]);
-      chartData = aggResult.map(r => ({ x: r.X, y: Number(r.Y) || 0 }));
+      xCategories = aggResult.map(r => String(r.X));
+      
+      yAxisList.forEach((col, idx) => {
+        let typeOverride = widget.type;
+        if (widget.type === 'combo') {
+          typeOverride = idx === 0 ? 'column' : 'line';
+        }
+        series.push({
+          name: col,
+          type: typeOverride === 'combo' ? 'column' : typeOverride,
+          data: aggResult.map(r => Number(r[col]) || 0)
+        });
+      });
+      
     } catch (err) {
       console.error(err);
       div.innerHTML = `<div style="color: var(--danger); font-size:12px; padding: 24px;">Failed to compile visualization: ${err.message}</div>`;
@@ -1221,29 +1750,33 @@ function renderSingleWidget(widget) {
     }
   } else {
     // Just map direct coordinates (max 100 scatter plots to preserve load speed)
-    chartData = activeData.slice(0, 100).map(row => ({
-      x: row[widget.xaxis],
-      y: Number(row[widget.yaxis]) || 0
-    }));
+    yAxisList.forEach(col => {
+      const chartData = activeData.slice(0, 100).map(row => ({
+        x: row[widget.xaxis],
+        y: Number(row[col]) || 0
+      }));
+      
+      if (dataProfile.dateCols.includes(widget.xaxis) || widget.xaxis.toLowerCase().includes("date")) {
+        chartData.sort((a, b) => new Date(a.x) - new Date(b.x));
+      }
+      
+      series.push({
+        name: col,
+        data: chartData.map(d => ({ x: Number(d.x) || d.x, y: d.y }))
+      });
+    });
     
-    // Sort dates if column represents timestamps
-    if (dataProfile.dateCols.includes(widget.xaxis) || widget.xaxis.toLowerCase().includes("date")) {
-      chartData.sort((a, b) => new Date(a.x) - new Date(b.x));
-    }
+    xCategories = activeData.slice(0, 100).map(row => String(row[widget.xaxis]));
   }
   
-  let xCategories = chartData.map(d => String(d.x));
-  let yValues = chartData.map(d => d.y);
-  
-  let series = widget.type === 'donut' ? yValues : [{ name: widget.yaxis, data: yValues }];
-  
-  // Custom styling attributes for predictive bounds
-  let chartColors = widget.type === 'donut' ? themePalettes[currentTheme] : [themePalettes[currentTheme][0]];
-  let strokeOptions = { curve: 'smooth', width: 2 };
+  let chartColors = widget.type === 'donut' ? themePalettes[currentTheme] : themePalettes[currentTheme].slice(0, yAxisList.length);
+  let strokeOptions = { curve: 'smooth', width: widget.type === 'combo' ? [0, 3, 3] : 2 };
   let fillOptions = undefined;
   
-  if (widget.forecast && (widget.type === 'line' || widget.type === 'area') && yValues.length >= 3) {
-    const forecastPeriods = 6;
+  // Custom styling attributes for predictive bounds (Option 4)
+  if (widget.forecast && (widget.type === 'line' || widget.type === 'area') && yAxisList.length === 1 && series[0].data.length >= 3) {
+    const yValues = series[0].data;
+    const forecastPeriods = widget.forecastPeriods || 6;
     const forecastResults = calculateForecast(xCategories, yValues, forecastPeriods);
     if (forecastResults) {
       const isDateSeries = dataProfile.dateCols.includes(widget.xaxis) || widget.xaxis.toLowerCase().includes("date");
@@ -1256,8 +1789,8 @@ function renderSingleWidget(widget) {
       const lowerData = [...Array(yValues.length - 1).fill(null), yValues[yValues.length - 1], ...forecastResults.futureLower];
       
       series = [
-        { name: `${widget.yaxis} (Actual)`, type: widget.type, data: actualsData },
-        { name: `${widget.yaxis} (Forecast)`, type: 'line', data: forecastData },
+        { name: `${primaryYaxis} (Actual)`, type: widget.type, data: actualsData },
+        { name: `${primaryYaxis} (Forecast)`, type: 'line', data: forecastData },
         { name: 'Upper Confidence Bound', type: 'area', data: upperData },
         { name: 'Lower Confidence Bound', type: 'area', data: lowerData }
       ];
@@ -1284,9 +1817,30 @@ function renderSingleWidget(widget) {
     }
   }
   
+  // Anomaly outlier points highlighting (Option 4)
+  let annotationsOptions = undefined;
+  if (widget.type !== 'donut' && series.length > 0 && series[0].data.length >= 3 && !widget.forecast) {
+    let rawYValues = [];
+    let xVals = [];
+    if (widget.agg !== "NONE") {
+      rawYValues = series[0].data;
+      xVals = xCategories;
+    } else {
+      rawYValues = series[0].data.map(pt => pt.y);
+      xVals = series[0].data.map(pt => pt.x);
+    }
+    
+    const outliers = getApexOutlierAnnotations(xVals, rawYValues);
+    if (outliers.length > 0) {
+      annotationsOptions = {
+        points: outliers
+      };
+    }
+  }
+  
   let options = {
     chart: {
-      type: widget.type,
+      type: widget.type === 'donut' ? 'donut' : (widget.type === 'combo' ? 'line' : widget.type),
       height: 260,
       foreColor: '#94a3b8',
       background: 'transparent',
@@ -1296,21 +1850,18 @@ function renderSingleWidget(widget) {
     colors: chartColors,
     stroke: strokeOptions,
     fill: fillOptions,
+    annotations: annotationsOptions,
     dataLabels: { enabled: false },
     plotOptions: {
-      bar: { borderRadius: 4 }
+      bar: { borderRadius: 4, columnWidth: '50%' }
     },
-    series: widget.type === 'donut' ? yValues : series,
+    series: widget.type === 'donut' ? series[0].data : series,
     labels: widget.type === 'donut' ? xCategories : undefined,
     xaxis: widget.type !== 'donut' ? { categories: xCategories } : undefined,
     grid: { borderColor: 'rgba(255,255,255,0.05)' }
   };
   
   if (widget.type === 'scatter') {
-    options.series = [{
-      name: `${widget.xaxis} vs ${widget.yaxis}`,
-      data: chartData.map(d => ({ x: Number(d.x) || d.x, y: d.y }))
-    }];
     options.xaxis = { type: 'numeric' };
   }
   
@@ -1322,27 +1873,34 @@ function renderSingleWidget(widget) {
 function openWidgetModal() {
   const modal = document.getElementById("widget-modal");
   const xaxisSelect = document.getElementById("widget-xaxis-select");
-  const yaxisSelect = document.getElementById("widget-yaxis-select");
+  const yaxisContainer = document.getElementById("widget-yaxis-checkboxes");
   
   // Reset modal state
   document.getElementById("widget-title-input").value = "";
   document.getElementById("widget-type-select").value = "bar";
   document.getElementById("widget-forecast-enable").checked = false;
   document.getElementById("widget-forecast-container").style.display = "none";
+  document.getElementById("widget-forecast-periods").value = "6";
   
   xaxisSelect.innerHTML = "";
-  yaxisSelect.innerHTML = "";
+  yaxisContainer.innerHTML = "";
   
   dataProfile.columns.forEach(col => {
     xaxisSelect.innerHTML += `<option value="${col.name}">${col.name}</option>`;
     if (col.type === "Number") {
-      yaxisSelect.innerHTML += `<option value="${col.name}">${col.name}</option>`;
+      yaxisContainer.innerHTML += `
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-main); margin-bottom: 2px;">
+          <input type="checkbox" name="widget-yaxis-metric" value="${col.name}" style="width: 14px; height: 14px; cursor: pointer; accent-color: var(--accent-color);">
+          <span>${col.name}</span>
+        </div>
+      `;
     }
   });
   
   modal.classList.add("active");
 }
 
+// Close custom modal
 function closeWidgetModal() {
   document.getElementById("widget-modal").classList.remove("active");
 }
@@ -1351,9 +1909,17 @@ function addNewChartWidget() {
   const title = document.getElementById("widget-title-input").value || "Custom Widget";
   const type = document.getElementById("widget-type-select").value;
   const xaxis = document.getElementById("widget-xaxis-select").value;
-  const yaxis = document.getElementById("widget-yaxis-select").value;
   const agg = document.getElementById("widget-agg-select").value;
   const forecast = document.getElementById("widget-forecast-enable").checked;
+  const forecastPeriods = Number(document.getElementById("widget-forecast-periods").value) || 6;
+  
+  const checkedInputs = document.querySelectorAll('input[name="widget-yaxis-metric"]:checked');
+  const yaxis = Array.from(checkedInputs).map(input => input.value);
+  
+  if (yaxis.length === 0) {
+    alert("Please select at least one Y-axis metric.");
+    return;
+  }
   
   const newWidget = {
     id: "w-" + Date.now(),
@@ -1362,12 +1928,62 @@ function addNewChartWidget() {
     xaxis,
     yaxis,
     agg,
-    forecast
+    forecast,
+    forecastPeriods
   };
   
   dashboardCharts.push(newWidget);
   closeWidgetModal();
   renderDashboard();
+}
+
+// Utility Math for hex to rgba conversion
+function hexToRgba(hex, alpha) {
+  hex = hex.replace('#', '');
+  if (hex.length === 3) {
+    hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+  }
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// Outlier annotations calculation helper
+function getApexOutlierAnnotations(xVals, yVals) {
+  if (yVals.length < 3) return [];
+  
+  const mean = yVals.reduce((a, b) => a + b, 0) / yVals.length;
+  const sqDiffs = yVals.map(v => Math.pow(v - mean, 2));
+  const stdDev = Math.sqrt(sqDiffs.reduce((a, b) => a + b, 0) / yVals.length) || 1;
+  
+  const annotations = [];
+  yVals.forEach((val, idx) => {
+    const z = (val - mean) / stdDev;
+    if (Math.abs(z) > 2) {
+      annotations.push({
+        x: xVals[idx],
+        y: val,
+        marker: {
+          size: 6,
+          fillColor: '#ef4444',
+          strokeColor: '#ffffff',
+          radius: 4
+        },
+        label: {
+          borderColor: '#ef4444',
+          style: {
+            color: '#fff',
+            background: '#ef4444',
+            fontSize: '9px',
+            padding: { left: 4, right: 4, top: 2, bottom: 2 }
+          },
+          text: `Outlier (Z=${z.toFixed(1)})`
+        }
+      });
+    }
+  });
+  return annotations;
 }
 
 // AI Storyboard narrative generator
@@ -2363,6 +2979,14 @@ function clearAllFilters() {
 function applyActiveFilters() {
   let filtered = JSON.parse(JSON.stringify(currentDataset)); // Deep copy from core dataset
   
+  // Apply dashboard slicers
+  for (let col in dashboardSlicers) {
+    const value = dashboardSlicers[col];
+    if (value && value !== "All") {
+      filtered = filtered.filter(row => String(row[col]) === value);
+    }
+  }
+  
   activeFilters.forEach(f => {
     filtered = filtered.filter(row => {
       let rawVal = row[f.column];
@@ -2484,6 +3108,926 @@ function renderFilterChips() {
   });
   
   container.innerHTML = html;
+}
+
+// Global dashboard slicers state
+let dashboardSlicers = {};
+
+// Register datasets in AlaSQL database context
+function registerTablesInAlaSql() {
+  alasql.tables = alasql.tables || {};
+  alasql.tables.data = { data: activeData };
+  for (let tableName in loadedDatasets) {
+    if (tableName !== 'data') {
+      alasql.tables[tableName] = { data: loadedDatasets[tableName] };
+    }
+  }
+}
+
+// Populate insert buttons in Calculated Columns Card
+function populateFormulaHelpers() {
+  const container = document.getElementById("formula-helper-buttons");
+  if (!container) return;
+  container.innerHTML = "";
+  
+  if (dataProfile.columns.length === 0) return;
+  
+  dataProfile.columns.forEach(col => {
+    if (col.type === "Number") {
+      const btn = document.createElement("button");
+      btn.className = "sql-snippet-btn";
+      btn.style.fontSize = "10px";
+      btn.style.padding = "2px 6px";
+      btn.textContent = `[${col.name}]`;
+      btn.onclick = () => {
+        const input = document.getElementById("formula-expression");
+        input.value += `[${col.name}]`;
+        input.focus();
+      };
+      container.appendChild(btn);
+    }
+  });
+}
+
+// Create Calculated Column Formula
+function createFormulaColumn() {
+  const colName = document.getElementById("formula-col-name").value.trim();
+  const expression = document.getElementById("formula-expression").value.trim();
+  
+  if (!colName) {
+    alert("Please enter a new column name.");
+    return;
+  }
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(colName)) {
+    alert("Column name must start with a letter/underscore and contain only alphanumeric characters/underscores.");
+    return;
+  }
+  if (activeData.length > 0 && activeData[0].hasOwnProperty(colName)) {
+    alert(`Column "${colName}" already exists.`);
+    return;
+  }
+  if (!expression) {
+    alert("Please enter a formula expression.");
+    return;
+  }
+  
+  const colRegex = /\[([^\]]+)\]/g;
+  const referencedCols = [];
+  let match;
+  while ((match = colRegex.exec(expression)) !== null) {
+    referencedCols.push(match[1]);
+  }
+  
+  if (referencedCols.length === 0) {
+    alert("Your formula should reference at least one column using [ColumnName] syntax.");
+    return;
+  }
+  
+  for (let col of referencedCols) {
+    const colObj = dataProfile.columns.find(c => c.name === col);
+    if (!colObj) {
+      alert(`Referenced column "${col}" does not exist in the dataset.`);
+      return;
+    }
+  }
+  
+  let cleanExpr = expression;
+  referencedCols.forEach(col => {
+    cleanExpr = cleanExpr.replace(new RegExp(`\\[${escapeRegExp(col)}\\]`, 'g'), "1");
+  });
+  
+  if (!/^[0-9+\-*/().\s]+$/.test(cleanExpr)) {
+    alert("Invalid formula expression. Only standard arithmetic operators (+, -, *, /) and parentheses are allowed.");
+    return;
+  }
+  
+  try {
+    Function(`"use strict"; return (${cleanExpr})`)();
+  } catch (e) {
+    alert(`Syntax error in formula: ${e.message}`);
+    return;
+  }
+  
+  function evaluateRow(row) {
+    let rowExpr = expression;
+    referencedCols.forEach(col => {
+      const val = row[col] !== null && row[col] !== undefined ? Number(row[col]) : 0;
+      rowExpr = rowExpr.replace(new RegExp(`\\[${escapeRegExp(col)}\\]`, 'g'), isNaN(val) ? "0" : String(val));
+    });
+    try {
+      const result = Function(`"use strict"; return (${rowExpr})`)();
+      return isNaN(result) || !isFinite(result) ? 0 : result;
+    } catch (e) {
+      return 0;
+    }
+  }
+  
+  activeData.forEach(row => {
+    row[colName] = evaluateRow(row);
+  });
+  currentDataset.forEach(row => {
+    row[colName] = evaluateRow(row);
+  });
+  
+  alert(`Calculated Column Created: Added "${colName}" to the dataset.`);
+  
+  document.getElementById("formula-col-name").value = "";
+  document.getElementById("formula-expression").value = "";
+  
+  profileSchema();
+  renderDataTable();
+  initSelectDropdowns();
+  initSqlConsole();
+}
+
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Pearson Correlation Coefficient Matrix Heatmap
+function renderCorrelationHeatmap() {
+  const container = document.getElementById("correlation-heatmap-container");
+  if (!container) return;
+  
+  const numCols = dataProfile.numericCols;
+  if (activeData.length === 0 || numCols.length < 2) {
+    container.innerHTML = `<div style="color: var(--text-muted); text-align: center; padding: 24px; font-size: 12px;">Need at least 2 numerical columns to calculate correlation.</div>`;
+    return;
+  }
+  
+  const matrix = {};
+  numCols.forEach(c1 => {
+    matrix[c1] = {};
+    numCols.forEach(c2 => {
+      if (c1 === c2) {
+        matrix[c1][c2] = 1.0;
+      } else {
+        const x = activeData.map(r => Number(r[c1])).filter(v => !isNaN(v));
+        const y = activeData.map(r => Number(r[c2])).filter(v => !isNaN(v));
+        const N = Math.min(x.length, y.length);
+        if (N < 2) {
+          matrix[c1][c2] = 0;
+          return;
+        }
+        
+        const meanX = x.reduce((a, b) => a + b, 0) / N;
+        const meanY = y.reduce((a, b) => a + b, 0) / N;
+        let num = 0;
+        let denX = 0;
+        let denY = 0;
+        
+        for (let i = 0; i < N; i++) {
+          const diffX = x[i] - meanX;
+          const diffY = y[i] - meanY;
+          num += diffX * diffY;
+          denX += diffX * diffX;
+          denY += diffY * diffY;
+        }
+        
+        const r = denX === 0 || denY === 0 ? 0 : num / Math.sqrt(denX * denY);
+        matrix[c1][c2] = r;
+      }
+    });
+  });
+  
+  let html = `<table class="correlation-table" style="width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed;">`;
+  html += `<tr><th style="padding: 6px; text-align: left; background: var(--bg-panel-solid); border: 1px solid var(--border-color); font-weight: 700; width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Metric</th>`;
+  numCols.forEach(c => {
+    html += `<th style="padding: 6px; text-align: center; background: var(--bg-panel-solid); border: 1px solid var(--border-color); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${c}">${c}</th>`;
+  });
+  html += `</tr>`;
+  
+  numCols.forEach(c1 => {
+    html += `<tr><td style="padding: 6px; text-align: left; background: var(--bg-panel-solid); border: 1px solid var(--border-color); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${c1}">${c1}</td>`;
+    numCols.forEach(c2 => {
+      const r = matrix[c1][c2];
+      let bgStyle = "";
+      const absR = Math.abs(r);
+      if (r > 0.01) {
+        bgStyle = `background-color: rgba(16, 185, 129, ${r.toFixed(2)});`;
+      } else if (r < -0.01) {
+        bgStyle = `background-color: rgba(239, 64, 64, ${absR.toFixed(2)});`;
+      } else {
+        bgStyle = `background-color: rgba(255, 255, 255, 0.02);`;
+      }
+      html += `<td style="padding: 8px 4px; text-align: center; border: 1px solid var(--border-color); ${bgStyle} color: var(--text-main); font-weight: 600;" title="Correlation between ${c1} and ${c2}: ${r.toFixed(3)}">${r.toFixed(2)}</td>`;
+    });
+    html += `</tr>`;
+  });
+  html += `</table>`;
+  container.innerHTML = html;
+}
+
+// Global Dashboard Slicers Renderer
+function renderDashboardSlicers() {
+  const container = document.getElementById("dashboard-slicer-container");
+  if (!container) return;
+  
+  const slicerCols = dataProfile.columns.filter(col => col.type === "Text" && col.unique <= 15 && col.name !== "OrderID" && col.name !== "SKU");
+  if (slicerCols.length === 0) {
+    container.style.display = "none";
+    return;
+  }
+  
+  container.style.display = "flex";
+  
+  let html = `
+    <div style="font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 6px; color: var(--text-main); width: 100%; margin-bottom: 2px;">
+      <i class="fa-solid fa-filter" style="color: var(--primary-color);"></i> Global Dashboard Slicers
+    </div>
+  `;
+  
+  slicerCols.forEach(col => {
+    const colName = col.name;
+    const uniqueVals = [...new Set(currentDataset.map(r => r[colName]))]
+      .filter(v => v !== null && v !== undefined && v !== "")
+      .sort();
+      
+    const currentSelected = dashboardSlicers[colName] || "All";
+    
+    html += `
+      <div class="select-group" style="min-width: 160px; flex: 0 1 auto;">
+        <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Filter by ${colName}</label>
+        <select class="custom-select dashboard-slicer-select" style="background-color: var(--bg-panel-solid); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 6px; padding: 6px 10px; width: 100%; outline: none; margin-top: 4px; font-size: 12px; height: 32px;" onchange="handleSlicerChange('${colName}', this.value)">
+          <option value="All">All ${colName}s</option>
+    `;
+    
+    uniqueVals.forEach(v => {
+      const isSel = currentSelected === v ? " selected" : "";
+      html += `<option value="${v.replace(/"/g, '&quot;')}"${isSel}>${v}</option>`;
+    });
+    
+    html += `
+        </select>
+      </div>
+    `;
+  });
+  
+  const hasActiveSlicer = Object.values(dashboardSlicers).some(v => v !== "All");
+  if (hasActiveSlicer) {
+    html += `
+      <button class="btn btn-secondary btn-sm" onclick="clearDashboardSlicers()" style="height: 32px; padding: 0 14px; margin-bottom: 0;">
+        Clear Slicers
+      </button>
+    `;
+  }
+  
+  container.innerHTML = html;
+}
+
+function handleSlicerChange(colName, value) {
+  if (value === "All") {
+    delete dashboardSlicers[colName];
+  } else {
+    dashboardSlicers[colName] = value;
+  }
+  applyDashboardSlices();
+  renderDashboard();
+}
+
+function clearDashboardSlicers() {
+  dashboardSlicers = {};
+  applyDashboardSlices();
+  renderDashboard();
+}
+
+function applyDashboardSlices() {
+  applyActiveFilters();
+}
+
+// PDF Exporter Trigger
+function exportPrintReport() {
+  window.print();
+}
+
+// Standalone Exporter Trigger
+function exportStandaloneReport() {
+  if (activeData.length === 0) return;
+  
+  const serializedData = JSON.stringify(activeData);
+  const serializedWidgets = JSON.stringify(dashboardCharts);
+  const serializedTheme = currentTheme;
+  
+  let html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Athena AI - Standalone Dashboard Report</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/alasql@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  <style>
+    :root {
+      --bg-main: #060813;
+      --bg-panel: rgba(13, 20, 35, 0.45);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary-color: #6366f1;
+      --accent-color: #06b6d4;
+      --secondary-color: #10b981;
+      --warning: #f59e0b;
+    }
+    
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      font-family: system-ui, -apple-system, sans-serif;
+      margin: 0;
+      padding: 24px;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    
+    header {
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    h1 {
+      font-size: 24px;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    
+    .glass-card {
+      background: var(--bg-panel);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    
+    .kpi-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .kpi-value {
+      font-size: 28px;
+      font-weight: 800;
+      display: block;
+    }
+    
+    .kpi-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      display: block;
+    }
+    
+    .kpi-icon {
+      font-size: 24px;
+    }
+    
+    .col-span-2 {
+      grid-column: span 2;
+    }
+    
+    .chart-card-wrapper {
+      min-height: 300px;
+    }
+    
+    .chart-title {
+      font-size: 14px;
+      margin-top: 0;
+      margin-bottom: 12px;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1><i class="fa-solid fa-brain" style="color: var(--accent-color);"></i> Athena AI Dashboard Report</h1>
+      <span style="color: var(--text-muted); font-size: 12px;">Exported Standalone: ${new Date().toLocaleString()}</span>
+    </header>
+    
+    <div class="grid" id="kpi-grid"></div>
+    <div class="grid" id="chart-grid"></div>
+  </div>
+  
+  <script>
+    const activeData = ${serializedData};
+    const dashboardCharts = ${serializedWidgets};
+    const currentTheme = "${serializedTheme}";
+    
+    const themePalettes = {
+      indigo: ['#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#a855f7'],
+      cyberpunk: ['#d946ef', '#06b6d4', '#a855f7', '#ec4899', '#f43f5e', '#f59e0b'],
+      emerald: ['#10b981', '#3b82f6', '#14b8a6', '#06b6d4', '#22c55e', '#84cc16'],
+      solar: ['#f97316', '#ef4444', '#eab308', '#f43f5e', '#f59e0b', '#ea580c'],
+      graphite: ['#94a3b8', '#64748b', '#cbd5e1', '#475569', '#334155', '#1e293b']
+    };
+    
+    const colors = themePalettes[currentTheme] || themePalettes.indigo;
+    
+    const totalRecs = activeData.length;
+    const numericCols = Object.keys(activeData[0] || {}).filter(k => typeof activeData[0][k] === 'number');
+    const firstCol = numericCols[0];
+    const secondCol = numericCols[1] || firstCol;
+    
+    const sumFirst = firstCol ? activeData.reduce((sum, r) => sum + (Number(r[firstCol]) || 0), 0) : 0;
+    const avgFirst = firstCol ? (sumFirst / totalRecs) : 0;
+    const sumSecond = secondCol ? activeData.reduce((sum, r) => sum + (Number(r[secondCol]) || 0), 0) : 0;
+    
+    const formatVal = (val, name) => {
+      if (name && (name.toLowerCase().includes("streams") || name.toLowerCase().includes("views"))) {
+        if (val >= 1e9) return (val/1e9).toFixed(1) + "B";
+        if (val >= 1e6) return (val/1e6).toFixed(1) + "M";
+        return val.toLocaleString();
+      }
+      if (name && (name.toLowerCase().includes("revenue") || name.toLowerCase().includes("profit") || name.toLowerCase().includes("cost") || name.toLowerCase().includes("price"))) {
+        if (val >= 1e6) return "$" + (val/1e6).toFixed(1) + "M";
+        return "$" + val.toLocaleString(undefined, {maximumFractionDigits: 0});
+      }
+      return val.toLocaleString(undefined, {maximumFractionDigits: 1});
+    };
+    
+    document.getElementById("kpi-grid").innerHTML = \`
+      <div class="glass-card kpi-card">
+        <div>
+          <span class="kpi-value">\${totalRecs}</span>
+          <span class="kpi-label">Total Records</span>
+        </div>
+        <i class="fa-solid fa-calculator kpi-icon" style="color: var(--accent-color);"></i>
+      </div>
+      <div class="glass-card kpi-card">
+        <div>
+          <span class="kpi-value">\${firstCol ? formatVal(sumFirst, firstCol) : "N/A"}</span>
+          <span class="kpi-label">Sum of \${firstCol || "Metric"}</span>
+        </div>
+        <i class="fa-solid fa-coins kpi-icon" style="color: var(--secondary-color);"></i>
+      </div>
+      <div class="glass-card kpi-card">
+        <div>
+          <span class="kpi-value">\${firstCol ? formatVal(avgFirst, firstCol) : "N/A"}</span>
+          <span class="kpi-label">Average \${firstCol || "Metric"}</span>
+        </div>
+        <i class="fa-solid fa-chart-line kpi-icon" style="color: var(--primary-color);"></i>
+      </div>
+      <div class="glass-card kpi-card">
+        <div>
+          <span class="kpi-value">\${secondCol ? formatVal(sumSecond, secondCol) : "N/A"}</span>
+          <span class="kpi-label">Total \${secondCol || "Metric"}</span>
+        </div>
+        <i class="fa-solid fa-scale-balanced kpi-icon" style="color: var(--warning);"></i>
+      </div>
+    \`;
+    
+    const chartGrid = document.getElementById("chart-grid");
+    dashboardCharts.forEach(widget => {
+      const widgetId = "c-" + widget.id;
+      chartGrid.innerHTML += \`
+        <div class="glass-card chart-card-wrapper col-span-2">
+          <h3 class="chart-title">\${widget.title}</h3>
+          <div id="\${widgetId}"></div>
+        </div>
+      \`;
+      
+      setTimeout(() => {
+        const yAxisList = Array.isArray(widget.yaxis) ? widget.yaxis : [widget.yaxis];
+        let series = [];
+        let xCategories = [];
+        
+        if (widget.agg !== "NONE") {
+          const selectFields = yAxisList.map(col => \`\${widget.agg}([\${col}]) AS [\${col}]\`).join(", ");
+          const sqlQuery = \`SELECT [\${widget.xaxis}] AS X, \${selectFields} FROM ? GROUP BY [\${widget.xaxis}]\`;
+          
+          try {
+            const aggResult = alasql(sqlQuery, [activeData]);
+            xCategories = aggResult.map(r => String(r.X));
+            
+            yAxisList.forEach(col => {
+              series.push({
+                name: col,
+                type: widget.type === 'combo' ? 'column' : widget.type,
+                data: aggResult.map(r => Number(r[col]) || 0)
+              });
+            });
+          } catch(e) {
+            document.getElementById(widgetId).innerText = "Execution error: " + e.message;
+            return;
+          }
+        } else {
+          yAxisList.forEach(col => {
+            const chartData = activeData.slice(0, 100).map(row => ({
+              x: row[widget.xaxis],
+              y: Number(row[col]) || 0
+            }));
+            series.push({
+              name: col,
+              data: chartData.map(d => ({ x: Number(d.x) || d.x, y: d.y }))
+            });
+          });
+          xCategories = activeData.slice(0, 100).map(row => String(row[widget.xaxis]));
+        }
+        
+        const options = {
+          chart: {
+            type: widget.type === 'donut' ? 'donut' : (widget.type === 'combo' ? 'line' : widget.type),
+            height: 260,
+            foreColor: '#94a3b8',
+            background: 'transparent',
+            toolbar: { show: false }
+          },
+          theme: { mode: 'dark' },
+          colors: widget.type === 'donut' ? colors : colors.slice(0, yAxisList.length),
+          stroke: { curve: 'smooth', width: 2 },
+          plotOptions: { bar: { borderRadius: 4 } },
+          series: widget.type === 'donut' ? series[0].data : series,
+          labels: widget.type === 'donut' ? xCategories : undefined,
+          xaxis: widget.type !== 'donut' ? { categories: xCategories } : undefined,
+          grid: { borderColor: 'rgba(255,255,255,0.05)' }
+        };
+        
+        new ApexCharts(document.getElementById(widgetId), options).render();
+      }, 50);
+    });
+  </script>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `athena_standalone_dashboard.html`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+// SQL editor auto-complete keywords
+const sqlKeywords = [
+  "SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "LIMIT", "JOIN", "ON", 
+  "UNION", "LEFT JOIN", "INNER JOIN", "AS", "AND", "OR", "SUM", "AVG", "COUNT", 
+  "MAX", "MIN", "LIKE", "DESC", "ASC"
+];
+
+let selectedSuggestionIndex = -1;
+let currentSuggestions = [];
+
+function getAutocompleteSuggestions() {
+  const columns = new Set();
+  const tables = Object.keys(loadedDatasets);
+  
+  for (let tableName in loadedDatasets) {
+    const dataset = loadedDatasets[tableName];
+    if (dataset && dataset.length > 0) {
+      Object.keys(dataset[0]).forEach(col => columns.add(col));
+    }
+  }
+  
+  return {
+    keywords: sqlKeywords,
+    tables: tables,
+    columns: Array.from(columns)
+  };
+}
+
+function initSqlAutocomplete() {
+  const textarea = document.getElementById("sql-editor-textarea");
+  const box = document.getElementById("sql-autocomplete-box");
+  if (!textarea || !box) return;
+  
+  textarea.addEventListener("input", (e) => {
+    showSuggestions();
+  });
+  
+  textarea.addEventListener("keydown", (e) => {
+    if (box.style.display !== "none") {
+      const items = box.querySelectorAll(".autocomplete-suggestion-item");
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        selectedSuggestionIndex = (selectedSuggestionIndex + 1) % items.length;
+        updateSelectedSuggestion(items);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        selectedSuggestionIndex = (selectedSuggestionIndex - 1 + items.length) % items.length;
+        updateSelectedSuggestion(items);
+      } else if (e.key === "Enter" || e.key === "Tab") {
+        if (selectedSuggestionIndex > -1 && items[selectedSuggestionIndex]) {
+          e.preventDefault();
+          insertSuggestion(currentSuggestions[selectedSuggestionIndex].value);
+        }
+      } else if (e.key === "Escape") {
+        box.style.display = "none";
+      }
+    }
+  });
+  
+  document.addEventListener("click", (e) => {
+    if (e.target !== textarea && !box.contains(e.target)) {
+      box.style.display = "none";
+    }
+  });
+}
+
+function updateSelectedSuggestion(items) {
+  items.forEach((item, idx) => {
+    if (idx === selectedSuggestionIndex) {
+      item.classList.add("selected");
+      item.scrollIntoView({ block: "nearest" });
+    } else {
+      item.classList.remove("selected");
+    }
+  });
+}
+
+function showSuggestions() {
+  const textarea = document.getElementById("sql-editor-textarea");
+  const box = document.getElementById("sql-autocomplete-box");
+  
+  const text = textarea.value;
+  const cursorIdx = textarea.selectionStart;
+  
+  const textBeforeCursor = text.substring(0, cursorIdx);
+  const words = textBeforeCursor.split(/[\s,()=+\-*/]/);
+  const currentWord = words[words.length - 1].trim();
+  
+  if (currentWord.length === 0) {
+    box.style.display = "none";
+    return;
+  }
+  
+  const dictionary = getAutocompleteSuggestions();
+  const matches = [];
+  const query = currentWord.toLowerCase();
+  
+  dictionary.keywords.forEach(kw => {
+    if (kw.toLowerCase().startsWith(query)) {
+      matches.push({ value: kw, type: "keyword" });
+    }
+  });
+  
+  dictionary.tables.forEach(tbl => {
+    if (tbl.toLowerCase().startsWith(query)) {
+      matches.push({ value: tbl, type: "table" });
+    }
+  });
+  
+  dictionary.columns.forEach(col => {
+    if (col.toLowerCase().startsWith(query)) {
+      matches.push({ value: `[${col}]`, type: "column", rawValue: col });
+    }
+  });
+  
+  if (matches.length === 0) {
+    box.style.display = "none";
+    return;
+  }
+  
+  currentSuggestions = matches;
+  selectedSuggestionIndex = 0;
+  
+  let html = "";
+  matches.forEach((m, idx) => {
+    const isSel = idx === 0 ? " selected" : "";
+    const displayVal = m.rawValue || m.value;
+    html += `
+      <div class="autocomplete-suggestion-item${isSel}" onclick="insertSuggestion('${m.value.replace(/'/g, "\\'")}')">
+        <span>${displayVal}</span>
+        <span class="autocomplete-suggestion-type" style="color: ${m.type === 'keyword' ? 'var(--primary-color)' : (m.type === 'table' ? 'var(--accent-color)' : 'var(--secondary-color)')}">${m.type}</span>
+      </div>
+    `;
+  });
+  box.innerHTML = html;
+  
+  box.style.left = "10px";
+  box.style.top = "100px";
+  box.style.display = "block";
+}
+
+function insertSuggestion(val) {
+  const textarea = document.getElementById("sql-editor-textarea");
+  const box = document.getElementById("sql-autocomplete-box");
+  
+  const text = textarea.value;
+  const cursorIdx = textarea.selectionStart;
+  
+  const textBeforeCursor = text.substring(0, cursorIdx);
+  const textAfterCursor = text.substring(cursorIdx);
+  
+  const words = textBeforeCursor.split(/([\s,()=+\-*/])/);
+  words[words.length - 1] = val + " ";
+  
+  const newTextBefore = words.join("");
+  textarea.value = newTextBefore + textAfterCursor;
+  
+  box.style.display = "none";
+  textarea.focus();
+  
+  const newCursor = newTextBefore.length;
+  textarea.setSelectionRange(newCursor, newCursor);
+}
+
+// Voice Recognition & Copilot Anomaly Scanner (Option 6)
+let voiceRecognitionInstance = null;
+
+function startVoiceRecognition() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    alert("Speech Recognition API is not supported in this browser. Please try Chrome or Edge.");
+    return;
+  }
+  
+  const voiceBtn = document.getElementById("chat-voice-btn");
+  if (!voiceBtn) return;
+  
+  if (voiceRecognitionInstance) {
+    voiceRecognitionInstance.stop();
+    voiceRecognitionInstance = null;
+    return;
+  }
+  
+  try {
+    voiceRecognitionInstance = new SpeechRecognition();
+    voiceRecognitionInstance.lang = 'en-US';
+    voiceRecognitionInstance.interimResults = false;
+    voiceRecognitionInstance.maxAlternatives = 1;
+    
+    voiceBtn.classList.add("mic-active");
+    voiceBtn.innerHTML = `<i class="fa-solid fa-microphone-slash"></i>`;
+    
+    voiceRecognitionInstance.onresult = (event) => {
+      const speechToText = event.results[0][0].transcript;
+      const chatInput = document.getElementById("chat-input-field");
+      if (chatInput) {
+        chatInput.value = speechToText;
+        submitChatQuery();
+      }
+    };
+    
+    voiceRecognitionInstance.onspeechend = () => {
+      voiceRecognitionInstance.stop();
+    };
+    
+    voiceRecognitionInstance.onend = () => {
+      voiceBtn.classList.remove("mic-active");
+      voiceBtn.innerHTML = `<i class="fa-solid fa-microphone"></i>`;
+      voiceRecognitionInstance = null;
+    };
+    
+    voiceRecognitionInstance.onerror = (event) => {
+      console.error("Speech recognition error:", event.error);
+      voiceBtn.classList.remove("mic-active");
+      voiceBtn.innerHTML = `<i class="fa-solid fa-microphone"></i>`;
+      voiceRecognitionInstance = null;
+    };
+    
+    voiceRecognitionInstance.start();
+  } catch (err) {
+    console.error("Failed to start speech recognition:", err);
+    voiceBtn.classList.remove("mic-active");
+    voiceBtn.innerHTML = `<i class="fa-solid fa-microphone"></i>`;
+    voiceRecognitionInstance = null;
+  }
+}
+
+function runAutomatedAnomalyScan() {
+  if (activeData.length === 0) {
+    alert("Please load a dataset first.");
+    return;
+  }
+  
+  const messages = document.getElementById("chat-bubble-messages");
+  if (!messages) return;
+  
+  // Show user action trigger message
+  messages.innerHTML += `
+    <div class="message-bubble message-user" style="display: flex; align-items: center; gap: 8px;">
+      <i class="fa-solid fa-wand-magic-sparkles" style="color: var(--primary-color);"></i>
+      <span>Triggered automated data anomaly scan.</span>
+    </div>
+  `;
+  messages.scrollTop = messages.scrollHeight;
+  
+  setTimeout(() => {
+    const anomalies = [];
+    
+    // 1. Scan for missing value columns (Null percentages)
+    dataProfile.columns.forEach(col => {
+      if (col.nulls > 0) {
+        const pct = Math.round((col.nulls / dataProfile.rowCount) * 100);
+        if (pct > 20) {
+          anomalies.push({
+            level: 'warning',
+            text: `Column <strong>${col.name}</strong> contains a high ratio of missing values (<strong>${pct}% nulls</strong>). This could skew aggregates.`
+          });
+        } else {
+          anomalies.push({
+            level: 'info',
+            text: `Column <strong>${col.name}</strong> contains minor null values (<strong>${col.nulls} records</strong>). Consider using Drop/Impute Null rows.`
+          });
+        }
+      }
+    });
+    
+    // 2. Scan for numerical outlier density
+    dataProfile.numericCols.forEach(col => {
+      const stats = colOutlierStats[col];
+      if (stats && stats.count > 0) {
+        const pct = ((stats.count / activeData.length) * 100).toFixed(1);
+        const level = stats.count > activeData.length * 0.1 ? 'danger' : 'warning';
+        anomalies.push({
+          level: level,
+          text: `Detected <strong>${stats.count} outliers</strong> in <strong>${col}</strong> (${pct}% of rows exceed 2 standard deviations). Consider Z-Score normalisation or Median Imputation.`
+        });
+      }
+    });
+    
+    // 3. Scan for category uniqueness/skewness (cardinality checks)
+    dataProfile.columns.forEach(col => {
+      if (col.type === 'Text') {
+        if (col.unique === 1) {
+          anomalies.push({
+            level: 'warning',
+            text: `Column <strong>${col.name}</strong> has only <strong>1 unique value</strong>. It contains no statistical variance.`
+          });
+        } else if (col.unique > dataProfile.rowCount * 0.9 && dataProfile.rowCount > 10) {
+          anomalies.push({
+            level: 'info',
+            text: `High cardinality detected on <strong>${col.name}</strong> (<strong>${col.unique} unique values</strong>). Likely acts as an identifier rather than group index.`
+          });
+        }
+      }
+    });
+    
+    // Compile and render the report response
+    let reportHtml = `
+      <div style="font-family: var(--font-sans); font-size: 13px;">
+        <h4 style="font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; color: var(--accent-color);">
+          <i class="fa-solid fa-square-poll-vertical"></i> Automated Data Anomaly Report
+        </h4>
+        <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 12px;">Scanning dimensions, metric distributions, and missing record densities...</p>
+    `;
+    
+    if (anomalies.length === 0) {
+      reportHtml += `
+        <div style="display: flex; gap: 10px; align-items: center; background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 8px; padding: 12px; font-size: 12px; color: var(--text-main);">
+          <i class="fa-solid fa-circle-check" style="color: var(--success); font-size: 16px;"></i>
+          <span>No structural skews, high-null ratios, or significant outliers detected. The dataset is clean.</span>
+        </div>
+      `;
+    } else {
+      reportHtml += `<ul style="display: flex; flex-direction: column; gap: 8px; list-style: none; padding-left: 0; margin-top: 8px;">`;
+      anomalies.forEach(an => {
+        let icon = 'fa-circle-info';
+        let color = 'var(--accent-color)';
+        let bg = 'rgba(6, 182, 212, 0.03)';
+        let border = 'rgba(6, 182, 212, 0.1)';
+        
+        if (an.level === 'warning') {
+          icon = 'fa-triangle-exclamation';
+          color = 'var(--warning)';
+          bg = 'rgba(234, 179, 8, 0.03)';
+          border = 'rgba(234, 179, 8, 0.15)';
+        } else if (an.level === 'danger') {
+          icon = 'fa-circle-xmark';
+          color = 'var(--danger)';
+          bg = 'rgba(239, 68, 68, 0.03)';
+          border = 'rgba(239, 68, 68, 0.15)';
+        }
+        
+        reportHtml += `
+          <li style="display: flex; gap: 8px; background: ${bg}; border: 1px solid ${border}; border-radius: 8px; padding: 8px 12px; align-items: flex-start; line-height: 1.4;">
+            <i class="fa-solid ${icon}" style="color: ${color}; font-size: 14px; margin-top: 2px; flex-shrink: 0;"></i>
+            <span style="font-size: 11px;">${an.text}</span>
+          </li>
+        `;
+      });
+      reportHtml += `</ul>`;
+    }
+    
+    reportHtml += `</div>`;
+    
+    messages.innerHTML += `
+      <div class="message-bubble message-assistant">
+        ${reportHtml}
+      </div>
+    `;
+    
+    messages.scrollTop = messages.scrollHeight;
+  }, 700);
 }
 
 
